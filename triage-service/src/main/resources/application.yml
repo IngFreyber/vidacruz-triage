@@ -46,6 +46,9 @@ triage:
     habilitado: ${TRIAGE_ESCALAMIENTO_HABILITADO:true}
     intervalo: ${TRIAGE_ESCALAMIENTO_INTERVALO:30s}
     tamano-lote: ${TRIAGE_ESCALAMIENTO_TAMANO_LOTE:200}
+  reportes:
+    # RF-05: rango máximo de un reporte (acota el tamaño de la respuesta: 31 días = 744 filas horarias).
+    rango-maximo: ${TRIAGE_REPORTES_RANGO_MAXIMO:31d}
   eventos:
     topic: ${KAFKA_TOPIC_EVENTOS:triaje.eventos}
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}

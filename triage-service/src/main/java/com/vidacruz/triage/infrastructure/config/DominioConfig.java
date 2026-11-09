@@ -1,6 +1,8 @@
 package com.vidacruz.triage.infrastructure.config;
 
 import com.vidacruz.triage.application.port.out.PacienteRepository;
+import com.vidacruz.triage.application.port.out.ReporteOperacionRepository;
+import com.vidacruz.triage.application.reporte.ReporteOperacionService;
 import com.vidacruz.triage.application.service.EscalarPacientesService;
 import com.vidacruz.triage.application.service.RegistroDeEventos;
 import com.vidacruz.triage.domain.service.ClasificadorTriage;
@@ -12,7 +14,10 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.transaction.reactive.TransactionalOperator;
 
+import org.springframework.beans.factory.annotation.Value;
+
 import java.time.Clock;
+import java.time.Duration;
 
 /**
  * Ensambla los servicios de dominio (Java puro) como beans. El dominio no conoce Spring.
@@ -25,6 +30,12 @@ public class DominioConfig {
     EscalarPacientesService escalarPacientesService(PacienteRepository pacientes, RegistroDeEventos eventos,
                                                     TransactionalOperator tx, EscalamientoProperties props) {
         return new EscalarPacientesService(pacientes, eventos, tx, props.tamanoLote());
+    }
+
+    @Bean
+    ReporteOperacionService reporteOperacionService(ReporteOperacionRepository repositorio,
+                                                    @Value("${triage.reportes.rango-maximo:31d}") Duration rangoMaximo) {
+        return new ReporteOperacionService(repositorio, rangoMaximo);
     }
 
     @Bean

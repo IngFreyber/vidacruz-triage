@@ -4,6 +4,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.vidacruz.triage.domain.exception.ConflictoConcurrenciaException;
 import com.vidacruz.triage.domain.exception.DatosPacienteInvalidosException;
+import com.vidacruz.triage.domain.exception.DatosPacienteInvalidosException.Violacion;
+import com.vidacruz.triage.domain.exception.ParametrosInvalidosException;
 import com.vidacruz.triage.domain.exception.PacienteNoEncontradoException;
 import com.vidacruz.triage.domain.exception.TransicionEstadoInvalidaException;
 import org.slf4j.Logger;
@@ -39,11 +41,20 @@ public class ManejadorErrores {
 
     @ExceptionHandler(DatosPacienteInvalidosException.class)
     ResponseEntity<ProblemDetail> datosInvalidos(DatosPacienteInvalidosException ex, ServerWebExchange exchange) {
-        List<Map<String, String>> errores = ex.violaciones().stream()
+        return validacion(ex.violaciones(), exchange);
+    }
+
+    @ExceptionHandler(ParametrosInvalidosException.class)
+    ResponseEntity<ProblemDetail> parametrosInvalidos(ParametrosInvalidosException ex, ServerWebExchange exchange) {
+        return validacion(ex.violaciones(), exchange);
+    }
+
+    private static ResponseEntity<ProblemDetail> validacion(List<Violacion> violaciones, ServerWebExchange exchange) {
+        List<Map<String, String>> errores = violaciones.stream()
                 .map(v -> Map.of("campo", v.campo(), "mensaje", v.mensaje()))
                 .toList();
         ProblemDetail pd = problema(HttpStatus.BAD_REQUEST, "datos-invalidos", "Datos de entrada inválidos",
-                ex.violaciones().stream().map(v -> v.campo() + " " + v.mensaje())
+                violaciones.stream().map(v -> v.campo() + " " + v.mensaje())
                         .collect(Collectors.joining("; ")), exchange);
         pd.setProperty("errores", errores);
         return respuesta(pd);

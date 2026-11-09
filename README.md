@@ -47,6 +47,7 @@ DB_PORT=15432 DB_PASSWORD=triage_local_pwd java -jar triage-service/target/triag
 | `GET` | `/triage/pacientes/{id}` | Datos completos, estado, flags y tiempo en el estado actual | 200, 404 |
 | `PATCH` | `/triage/pacientes/{id}/estado` | Transición de estado `{"estado": "EN_CONSULTA"}` (RF-02) | 200, 400, 404, 409 |
 | `GET` | `/triage/pacientes/{id}/auditoria` | Bitácora clínica en solo lectura (RN-04) | 200, 404 |
+| `GET` | `/triage/reportes/operacion?desde=…&hasta=…` | Reporte por hora (RF-05) | 200, 400 |
 
 Los errores siguen el estándar **RFC 7807** (`application/problem+json`) con `type`, `title`, `status`,
 `detail`, `instance`, `timestamp` y, en validaciones, `errores: [{campo, mensaje}]`.
@@ -65,6 +66,25 @@ Para verlo en segundos:
 DB_PORT=15432 DB_PASSWORD=triage_local_pwd TRIAGE_SLA_CRITICO=20s TRIAGE_ESCALAMIENTO_INTERVALO=3s \
   java -jar triage-service/target/triage-service.jar
 ```
+
+**Reporte de operación (RF-05):** `GET /triage/reportes/operacion?desde=2026-11-09&hasta=2026-11-10`
+devuelve, por cada hora del rango `[desde, hasta)` en UTC (incluidas las horas vacías) y en un `resumen`
+del rango completo: total de registrados, conteo por nivel, pacientes atendidos, espera promedio y **p95**
+(registro → primera entrada a consulta, en minutos). Se calcula en **una sola consulta SQL**, sin iterar en
+memoria:
+
+| Técnica | Para qué |
+|---|---|
+| `generate_series` | Una fila por cada hora del rango, también sin pacientes |
+| `ROW_NUMBER() OVER (PARTITION BY paciente_id ORDER BY ocurrido_en)` | Primera entrada a consulta de cada paciente desde la auditoría |
+| `COUNT(*) FILTER (WHERE nivel = …)` | Conteo por nivel en una sola pasada |
+| `percentile_cont(0.95) WITHIN GROUP (ORDER BY …)` | p95 continuo (interpolado) de la espera |
+| `GROUP BY ROLLUP (hora)` + `GROUPING()` | Filas por hora y fila de resumen en la misma consulta |
+| CTE (`WITH`) | Pasos legibles: horas → registrados → primera consulta → esperas → agregados |
+
+Fechas ISO 8601 con zona (`2026-11-09T10:00:00Z`, `…-05:00`), sin zona (UTC) o solo fecha. Rango máximo 31 días
+(`TRIAGE_REPORTES_RANGO_MAXIMO`). La espera se atribuye a la hora de **registro**; los pacientes que aún no
+entraron a consulta (o tuvieron alta directa) cuentan en los totales pero no en la espera.
 
 **Inmutabilidad de la auditoría:** además de no existir endpoint de borrado, un trigger de PostgreSQL
 rechaza `UPDATE`, `DELETE` y `TRUNCATE` sobre `auditoria_clinica`.
@@ -92,6 +112,9 @@ Ver [`docs/adr`](docs/adr).
 | S7 | Validación de entrada | Se reportan **todas** las violaciones en una sola respuesta 400, cada una con su campo |
 | S8 | Cambio de configuración de SLA con pacientes en espera | El SLA se fija al registrar; los cambios aplican solo a nuevos registros |
 | S9 | `slaMinutos` con SLA configurado en segundos (pruebas) | Se redondea hacia arriba (20 s → 1 min); `vencimientoSla` da el instante exacto |
+| S10 | RF-05: a qué hora pertenece una espera | A la hora de **registro** del paciente (la cohorte que llegó en esa hora), aunque la consulta ocurra después |
+| S11 | RF-05: pacientes sin consulta (en espera o alta directa) | Se cuentan en totales y por nivel, pero no en promedio ni p95 (no tienen "primera entrada a consulta"); `pacientesAtendidos` explicita la base del cálculo |
+| S12 | RF-05: zona horaria de las horas | UTC, declarada en la respuesta (`zonaHoraria`); `hasta` es exclusivo |
 
 ## Plan de etapas
 
@@ -100,7 +123,7 @@ Ver [`docs/adr`](docs/adr).
 - [x] 2. Persistencia y API de triage (RF-01, RF-02, RN-04)
 - [x] 3. Publicación de eventos (outbox → Kafka)
 - [x] 4. SLA y escalamiento idempotente (RF-03, RN-03)
-- [ ] 5. Reporte de operación con SQL avanzado (RF-05)
+- [x] 5. Reporte de operación con SQL avanzado (RF-05)
 - [ ] 6. Asistente — vista de urgencias desde Kafka en Redis (RF-04 B)
 - [ ] 7. Asistente — RAG con citas, anti-alucinación y modo degradado (RF-04 A, RN-05)
 - [ ] 8. Servicio de alertas (RF-06)
