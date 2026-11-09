@@ -93,7 +93,7 @@ public record Paciente(
                 criteriosClasificacion, sla, estado, true, fechaRegistro, fechaCambioEstado, ahora, version);
         return Optional.of(new Transicion(nuevo, evento(TipoEvento.PACIENTE_ESCALADO, estado, estado,
                 "Flag escalado false → true: SLA de %d min vencido (espera de %d min)"
-                        .formatted(sla.toMinutes(), Duration.between(fechaRegistro, ahora).toMinutes()), ahora)));
+                        .formatted(slaMinutos(), Duration.between(fechaRegistro, ahora).toMinutes()), ahora)));
     }
 
     public boolean esEscalable(Instant ahora) {
@@ -102,6 +102,15 @@ public record Paciente(
 
     public boolean slaVencido(Instant ahora) {
         return ahora.isAfter(vencimientoSla());
+    }
+
+    /**
+     * SLA expresado en minutos completos, redondeando hacia arriba: un SLA configurado en segundos para
+     * pruebas (p. ej. 20s) se informa como 1 minuto y nunca como 0.
+     */
+    public long slaMinutos() {
+        long segundos = sla.toSeconds();
+        return (segundos + 59) / 60;
     }
 
     public Instant vencimientoSla() {

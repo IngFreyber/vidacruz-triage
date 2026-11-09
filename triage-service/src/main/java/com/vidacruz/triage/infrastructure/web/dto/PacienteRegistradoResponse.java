@@ -21,7 +21,7 @@ public record PacienteRegistradoResponse(
         List<String> criteriosClasificacion) {
 
     public static PacienteRegistradoResponse desde(Paciente p) {
-        return new PacienteRegistradoResponse(p.id(), p.nivel(), p.sla().toMinutes(), p.estado(),
+        return new PacienteRegistradoResponse(p.id(), p.nivel(), p.slaMinutos(), p.estado(),
                 p.fechaRegistro(), p.criteriosClasificacion());
     }
 }

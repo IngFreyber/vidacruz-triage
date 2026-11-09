@@ -54,7 +54,7 @@ public record PacienteResponse(
     public static PacienteResponse desde(Paciente p, Instant ahora) {
         boolean slaVencido = p.estado() == EstadoPaciente.REGISTRADO && p.slaVencido(ahora);
         return new PacienteResponse(p.id(), p.nombreCompleto(), p.edad(), p.signosVitales(), p.quejaPrincipal(),
-                p.nivel(), p.criteriosClasificacion(), p.sla().toMinutes(), p.vencimientoSla(), p.estado(),
+                p.nivel(), p.criteriosClasificacion(), p.slaMinutos(), p.vencimientoSla(), p.estado(),
                 p.fechaRegistro(), p.fechaCambioEstado(), TiempoEnEstado.de(p.tiempoEnEstadoActual(ahora)),
                 new Flags(p.escalado(), p.fechaEscalamiento(), slaVencido));
     }

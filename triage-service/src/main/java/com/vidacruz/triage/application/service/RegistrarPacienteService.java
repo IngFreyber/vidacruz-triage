@@ -52,6 +52,6 @@ public class RegistrarPacienteService {
                         .thenReturn(t.paciente()))
                 .as(tx::transactional)
                 .doOnNext(p -> log.info("Paciente registrado id={} nivel={} slaMin={}",
-                        p.id(), p.nivel(), p.sla().toMinutes()));
+                        p.id(), p.nivel(), p.slaMinutos()));
     }
 }

@@ -51,6 +51,18 @@ class PacienteTest {
         }
 
         @Test
+        @DisplayName("slaMinutos redondea hacia arriba un SLA configurado en segundos (nunca informa 0)")
+        void slaMinutosRedondeaHaciaArriba() {
+            Paciente p = registrarE1().paciente();
+            Paciente conSla20s = new Paciente(p.id(), p.nombreCompleto(), p.edad(), p.signosVitales(),
+                    p.quejaPrincipal(), p.nivel(), p.criteriosClasificacion(), Duration.ofSeconds(20), p.estado(),
+                    p.escalado(), p.fechaRegistro(), p.fechaCambioEstado(), p.fechaEscalamiento(), p.version());
+
+            assertThat(p.slaMinutos()).isEqualTo(5);
+            assertThat(conSla20s.slaMinutos()).isEqualTo(1);
+        }
+
+        @Test
         void produceEventoPacienteRegistradoParaAuditoria() {
             EventoPaciente e = registrarE1().evento();
 

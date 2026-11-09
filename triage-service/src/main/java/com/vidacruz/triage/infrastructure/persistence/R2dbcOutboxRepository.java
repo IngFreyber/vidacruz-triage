@@ -119,7 +119,7 @@ public class R2dbcOutboxRepository implements OutboxRepository {
                 e.estadoAnterior() == null ? null : e.estadoAnterior().name(),
                 e.estadoNuevo().name(),
                 p.escalado(),
-                p.sla().toMinutes(),
+                p.slaMinutos(),
                 p.fechaRegistro(),
                 e.detalle()));
     }
