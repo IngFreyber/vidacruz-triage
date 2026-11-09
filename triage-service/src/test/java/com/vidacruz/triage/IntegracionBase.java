@@ -7,6 +7,7 @@ import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWeb
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.TestPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.kafka.KafkaContainer;
 
@@ -19,6 +20,9 @@ import java.util.Map;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureWebTestClient
+// El monitor de SLA se apaga en el contexto compartido: los tests invocan el caso de uso con un "ahora"
+// controlado. MonitorSlaIntegrationTest lo enciende en su propio contexto.
+@TestPropertySource(properties = "triage.escalamiento.habilitado=false")
 public abstract class IntegracionBase {
 
     protected static final String TOPIC = "triaje.eventos";

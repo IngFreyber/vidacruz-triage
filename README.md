@@ -57,6 +57,15 @@ conflicto se relee y reintenta, y la transición se vuelve a validar con el esta
 **Eventos:** el `OutboxRelay` publica los eventos pendientes en `triaje.eventos` (key = `pacienteId`,
 JSON versionado, entrega at-least-once) y los marca como publicados tras el ack de Kafka. Si Kafka no está
 disponible la API sigue respondiendo y los eventos salen al recuperarse el broker (ver ADR-0002).
+**Escalamiento (RF-03):** un monitor reactivo evalúa periódicamente a los pacientes en `REGISTRADO` y
+escala, una única vez, a los que superaron su SLA (flag persistente, auditoría y evento `paciente_escalado`).
+Para verlo en segundos:
+
+```bash
+DB_PORT=15432 DB_PASSWORD=triage_local_pwd TRIAGE_SLA_CRITICO=20s TRIAGE_ESCALAMIENTO_INTERVALO=3s \
+  java -jar triage-service/target/triage-service.jar
+```
+
 **Inmutabilidad de la auditoría:** además de no existir endpoint de borrado, un trigger de PostgreSQL
 rechaza `UPDATE`, `DELETE` y `TRUNCATE` sobre `auditoria_clinica`.
 
@@ -68,6 +77,7 @@ Ver [`docs/adr`](docs/adr).
 |---|---|
 | [0001](docs/adr/0001-descomposicion-en-microservicios.md) | Descomposición en tres microservicios y arquitectura hexagonal |
 | [0002](docs/adr/0002-outbox-y-formato-de-eventos.md) | Transactional outbox, garantías de entrega y formato JSON de los eventos |
+| [0003](docs/adr/0003-monitor-de-sla-y-escalamiento-idempotente.md) | Monitor de SLA por scheduler reactivo y escalamiento idempotente |
 
 ## Supuestos ante ambigüedades del enunciado
 
@@ -80,6 +90,8 @@ Ver [`docs/adr`](docs/adr).
 | S5 | Auditoría del escalamiento (no cambia el estado) | Entrada con estado anterior = estado nuevo = `REGISTRADO`, tipo `paciente_escalado` y detalle "Flag escalado false → true" |
 | S6 | Un paciente escalado que entra a consulta | Conserva el flag `escalado = true` (es histórico, sirve para el reporte y la auditoría) |
 | S7 | Validación de entrada | Se reportan **todas** las violaciones en una sola respuesta 400, cada una con su campo |
+| S8 | Cambio de configuración de SLA con pacientes en espera | El SLA se fija al registrar; los cambios aplican solo a nuevos registros |
+| S9 | `slaMinutos` con SLA configurado en segundos (pruebas) | Se redondea hacia arriba (20 s → 1 min); `vencimientoSla` da el instante exacto |
 
 ## Plan de etapas
 
@@ -87,7 +99,7 @@ Ver [`docs/adr`](docs/adr).
 - [x] 1. Dominio de triage: validaciones, clasificación RN-01, SLA RN-02, máquina de estados
 - [x] 2. Persistencia y API de triage (RF-01, RF-02, RN-04)
 - [x] 3. Publicación de eventos (outbox → Kafka)
-- [ ] 4. SLA y escalamiento idempotente (RF-03, RN-03)
+- [x] 4. SLA y escalamiento idempotente (RF-03, RN-03)
 - [ ] 5. Reporte de operación con SQL avanzado (RF-05)
 - [ ] 6. Asistente — vista de urgencias desde Kafka en Redis (RF-04 B)
 - [ ] 7. Asistente — RAG con citas, anti-alucinación y modo degradado (RF-04 A, RN-05)

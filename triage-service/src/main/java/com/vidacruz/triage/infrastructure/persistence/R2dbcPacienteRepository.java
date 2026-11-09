@@ -9,6 +9,7 @@ import com.vidacruz.triage.domain.model.SignosVitales;
 import io.r2dbc.spi.Readable;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Repository;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.math.BigDecimal;
@@ -40,6 +41,20 @@ public class R2dbcPacienteRepository implements PacienteRepository {
                SET estado = :estado, escalado = :escalado, fecha_cambio_estado = :fechaCambioEstado,
                    fecha_escalamiento = :fechaEscalamiento, version = version + 1
              WHERE id = :id AND version = :version
+            """;
+
+    /**
+     * Candidatos a escalamiento (RF-03). El SLA vigente al registrar queda fijado por paciente
+     * ({@code sla_segundos}): cambiar la configuración no altera retroactivamente a quienes ya esperan.
+     */
+    private static final String SELECT_SLA_VENCIDO = """
+            SELECT * FROM pacientes
+             WHERE estado = 'REGISTRADO'
+               AND escalado = FALSE
+               AND fecha_registro + make_interval(secs => sla_segundos) < :ahora
+             ORDER BY fecha_registro
+             LIMIT :limite
+               FOR UPDATE SKIP LOCKED
             """;
 
     private final DatabaseClient db;
@@ -95,6 +110,15 @@ public class R2dbcPacienteRepository implements PacienteRepository {
         return spec.fetch().rowsUpdated()
                 .flatMap(filas -> filas == 1 ? Mono.<Void>empty()
                         : Mono.error(new ConflictoConcurrenciaException(p.id())));
+    }
+
+    @Override
+    public Flux<Paciente> bloquearConSlaVencido(Instant ahora, int limite) {
+        return db.sql(SELECT_SLA_VENCIDO)
+                .bind("ahora", ahora)
+                .bind("limite", limite)
+                .map(R2dbcPacienteRepository::mapear)
+                .all();
     }
 
     static Paciente mapear(Readable row) {
