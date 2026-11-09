@@ -1,0 +1,25 @@
+# Build
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.project
+.classpath
+.settings/
+
+# Secretos / entorno local
+.env
+*.env.local
+
+# Enunciado de la prueba (no se publica)
+*.pdf
+
+# Claude Code local
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
