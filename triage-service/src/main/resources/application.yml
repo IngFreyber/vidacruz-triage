@@ -40,12 +40,23 @@ triage:
     urgente-2: ${TRIAGE_SLA_URGENTE_2:30m}
     no-urgente: ${TRIAGE_SLA_NO_URGENTE:60m}
     no-urgente-2: ${TRIAGE_SLA_NO_URGENTE_2:120m}
+  eventos:
+    topic: ${KAFKA_TOPIC_EVENTOS:triaje.eventos}
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    outbox:
+      habilitado: ${OUTBOX_HABILITADO:true}
+      intervalo: ${OUTBOX_INTERVALO:500ms}
+      tamano-lote: ${OUTBOX_TAMANO_LOTE:100}
   quejas-administrativas:
     - documentos
     - recolección de resultados
     - renovación de recetario
     - vacunación
     - seguimiento
+
+logging:
+  level:
+    org.apache.kafka: WARN
 
 management:
   endpoints:

@@ -54,6 +54,9 @@ Los errores siguen el estándar **RFC 7807** (`application/problem+json`) con `t
 **Atomicidad:** paciente, entrada de auditoría y evento (tabla `outbox_eventos`) se escriben en la misma
 transacción R2DBC. **Concurrencia:** las actualizaciones usan control optimista por versión; ante un
 conflicto se relee y reintenta, y la transición se vuelve a validar con el estado fresco.
+**Eventos:** el `OutboxRelay` publica los eventos pendientes en `triaje.eventos` (key = `pacienteId`,
+JSON versionado, entrega at-least-once) y los marca como publicados tras el ack de Kafka. Si Kafka no está
+disponible la API sigue respondiendo y los eventos salen al recuperarse el broker (ver ADR-0002).
 **Inmutabilidad de la auditoría:** además de no existir endpoint de borrado, un trigger de PostgreSQL
 rechaza `UPDATE`, `DELETE` y `TRUNCATE` sobre `auditoria_clinica`.
 
@@ -64,6 +67,7 @@ Ver [`docs/adr`](docs/adr).
 | ADR | Decisión |
 |---|---|
 | [0001](docs/adr/0001-descomposicion-en-microservicios.md) | Descomposición en tres microservicios y arquitectura hexagonal |
+| [0002](docs/adr/0002-outbox-y-formato-de-eventos.md) | Transactional outbox, garantías de entrega y formato JSON de los eventos |
 
 ## Supuestos ante ambigüedades del enunciado
 
@@ -82,7 +86,7 @@ Ver [`docs/adr`](docs/adr).
 - [x] 0. Andamiaje: monorepo Maven, infraestructura local, ADR inicial
 - [x] 1. Dominio de triage: validaciones, clasificación RN-01, SLA RN-02, máquina de estados
 - [x] 2. Persistencia y API de triage (RF-01, RF-02, RN-04)
-- [ ] 3. Publicación de eventos (outbox → Kafka)
+- [x] 3. Publicación de eventos (outbox → Kafka)
 - [ ] 4. SLA y escalamiento idempotente (RF-03, RN-03)
 - [ ] 5. Reporte de operación con SQL avanzado (RF-05)
 - [ ] 6. Asistente — vista de urgencias desde Kafka en Redis (RF-04 B)

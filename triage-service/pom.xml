@@ -37,6 +37,12 @@
             <artifactId>r2dbc-postgresql</artifactId>
         </dependency>
 
+        <!-- Mensajería reactiva con backpressure -->
+        <dependency>
+            <groupId>io.projectreactor.kafka</groupId>
+            <artifactId>reactor-kafka</artifactId>
+        </dependency>
+
         <!-- Migraciones: Flyway usa JDBC solo al arranque (fuera del event loop) -->
         <dependency>
             <groupId>org.flywaydb</groupId>
@@ -79,6 +85,11 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>r2dbc</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>kafka</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
