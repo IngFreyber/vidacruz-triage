@@ -40,10 +40,22 @@ Ver [`docs/adr`](docs/adr).
 |---|---|
 | [0001](docs/adr/0001-descomposicion-en-microservicios.md) | Descomposición en tres microservicios y arquitectura hexagonal |
 
+## Supuestos ante ambigüedades del enunciado
+
+| # | Ambigüedad | Supuesto adoptado |
+|---|---|---|
+| S1 | RN-01 no contempla hipotermia ni hipertensión aislada | Temperatura < 38.0 °C y P. sistólica > 100 mmHg no elevan el nivel por sí solas (E1 es CRITICO por su FC) |
+| S2 | "La queja principal pertenece a la lista administrativa" | Igualdad tras normalizar (minúsculas, sin tildes, sin espacios repetidos ni puntuación final). No se usa "contiene" para no bajar la prioridad de quejas clínicas que mencionen un término administrativo (p. ej. "Seguimiento de herida infectada") |
+| S3 | Longitud de la queja principal no especificada | Obligatoria, de 1 a 500 caracteres |
+| S4 | "Superó su SLA" | Se escala cuando `ahora > fechaRegistro + SLA` (estrictamente mayor) |
+| S5 | Auditoría del escalamiento (no cambia el estado) | Entrada con estado anterior = estado nuevo = `REGISTRADO`, tipo `paciente_escalado` y detalle "Flag escalado false → true" |
+| S6 | Un paciente escalado que entra a consulta | Conserva el flag `escalado = true` (es histórico, sirve para el reporte y la auditoría) |
+| S7 | Validación de entrada | Se reportan **todas** las violaciones en una sola respuesta 400, cada una con su campo |
+
 ## Plan de etapas
 
 - [x] 0. Andamiaje: monorepo Maven, infraestructura local, ADR inicial
-- [ ] 1. Dominio de triage: validaciones, clasificación RN-01, SLA RN-02, máquina de estados
+- [x] 1. Dominio de triage: validaciones, clasificación RN-01, SLA RN-02, máquina de estados
 - [ ] 2. Persistencia y API de triage (RF-01, RF-02, RN-04)
 - [ ] 3. Publicación de eventos (outbox → Kafka)
 - [ ] 4. SLA y escalamiento idempotente (RF-03, RN-03)
