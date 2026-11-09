@@ -14,6 +14,42 @@ spring:
   webflux:
     problemdetails:
       enabled: true
+  http:
+    client:
+      # Timeouts HTTP del cliente que usa Spring AI para llamar al LLM (además del TimeLimiter).
+      connect-timeout: 5s
+      read-timeout: 20s
+  ai:
+    model:
+      chat: openai
+      embedding: transformers
+      image: none
+      moderation: none
+      audio:
+        speech: none
+        transcription: none
+    # Gemini expone una API compatible con OpenAI. La API key SOLO llega por variable de entorno.
+    # Sin key el servicio arranca igual: las consultas que requieren LLM responden 503 (modo degradado).
+    openai:
+      api-key: ${LLM_API_KEY:sin-configurar}
+      base-url: ${LLM_BASE_URL:https://generativelanguage.googleapis.com/v1beta/openai}
+      chat:
+        completions-path: /chat/completions
+        options:
+          model: ${LLM_MODEL:gemini-3.5-flash}
+          temperature: 0.0
+    # Embeddings locales (ONNX, multilingüe): la recuperación no depende de ningún proveedor externo.
+    embedding:
+      transformer:
+        onnx:
+          model-uri: ${EMBEDDINGS_MODEL_URI:https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2/resolve/main/onnx/model.onnx}
+        tokenizer:
+          uri: ${EMBEDDINGS_TOKENIZER_URI:https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2/resolve/main/tokenizer.json}
+        cache:
+          directory: ${EMBEDDINGS_CACHE_DIR:${user.home}/.cache/vidacruz/onnx}
+    # Los reintentos los gobierna Resilience4j (no se acumulan reintentos ocultos de Spring AI).
+    retry:
+      max-attempts: 1
 
 server:
   port: ${SERVER_PORT:8082}
@@ -30,6 +66,33 @@ asistente:
     habilitado: ${URGENCIAS_CONSUMIDOR_HABILITADO:true}
     ttl-deduplicacion: ${URGENCIAS_TTL_DEDUPLICACION:7d}
     ttl-paciente-alta: ${URGENCIAS_TTL_PACIENTE_ALTA:7d}
+  # RF-04 parte A: RAG sobre el corpus oficial (ver ADR-0005).
+  rag:
+    corpus: classpath:protocolos/*.md
+    umbral-similitud: ${RAG_UMBRAL_SIMILITUD:0.42}
+    top-k: ${RAG_TOP_K:4}
+
+# Modo degradado ante fallas del LLM: circuito sobre la instancia "llm".
+resilience4j:
+  circuitbreaker:
+    instances:
+      llm:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 4
+        failure-rate-threshold: 50
+        slow-call-duration-threshold: 15s
+        slow-call-rate-threshold: 80
+        wait-duration-in-open-state: ${LLM_CIRCUITO_ESPERA:30s}
+        permitted-number-of-calls-in-half-open-state: 2
+        automatic-transition-from-open-to-half-open-enabled: true
+        register-health-indicator: true
+        allow-health-indicator-to-fail: false
+  timelimiter:
+    instances:
+      llm:
+        timeout-duration: ${LLM_TIMEOUT:25s}
+        cancel-running-future: true
 
 logging:
   level:

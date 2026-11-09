@@ -27,7 +27,7 @@ Micrometer / Prometheus / OpenTelemetry · Testcontainers · Docker · Kubernete
 Requisitos: Docker. (Para desarrollo: JDK 21.)
 
 ```bash
-cp .env.example .env       # completar LLM_API_KEY (Google AI Studio)
+cp .env.example .env       # completar LLM_API_KEY (https://aistudio.google.com/api-keys, plan gratuito)
 docker compose up -d       # levanta PostgreSQL, Kafka (topic triaje.eventos) y Redis
 ./mvnw verify              # compila y ejecuta los tests (los de integración usan Testcontainers)
 ```
@@ -93,7 +93,28 @@ rechaza `UPDATE`, `DELETE` y `TRUNCATE` sobre `auditoria_clinica`.
 
 | Método | Ruta | Descripción | Respuestas |
 |---|---|---|---|
+| `POST` | `/asistente/consulta` | Consulta en lenguaje natural sobre protocolos, con RAG y citas (RF-04 A) | 200, 400, 503 |
 | `GET` | `/asistente/estado-urgencias` | Pacientes activos (no `ALTA`) por nivel, en tiempo real (RF-04 B) | 200, 503 |
+
+```bash
+curl -X POST localhost:8082/asistente/consulta -H 'Content-Type: application/json' \
+  -d '{"pregunta":"¿Cuáles son las medidas iniciales ante una crisis hipertensiva?"}'
+```
+```json
+{"respuesta":"Las medidas iniciales ante una crisis hipertensiva son:\n- Reconfirmar la presión tras 5 minutos de reposo.\n- No reducir la presión más de un 25% en la primera hora.\n- Vigilar signos de encefalopatía.",
+ "fuentes":[{"protocolo":"PROTO-001","seccion":"Medidas iniciales"}],"estado":"RESPONDIDA"}
+```
+
+`estado` puede ser `RESPONDIDA` (con al menos una fuente válida), `SIN_PROTOCOLO` (solo el aviso "no existe
+protocolo disponible", sin contenido clínico) o `RESPUESTA_DESCARTADA` (el LLM citó algo que no se le entregó o
+no citó: se descarta todo el texto generado). Si el LLM falla o el circuito está abierto → **503** con
+`Retry-After`.
+
+**Anti-alucinación en tres capas** (ADR-0005): (1) umbral de similitud calibrado: sin fragmento relevante se
+responde el aviso **sin llamar al LLM**; (2) el LLM recibe solo los fragmentos recuperados, con temperatura 0 y
+salida JSON; (3) cada cita se valida contra los fragmentos entregados. Embeddings **locales** (ONNX multilingüe):
+la recuperación no depende del proveedor. El corpus está en
+[`asistente-service/src/main/resources/protocolos`](asistente-service/src/main/resources/protocolos).
 
 ```json
 {"totalActivos":6,"porNivel":{"CRITICO":2,"URGENTE":1,"URGENTE_2":0,"NO_URGENTE":3,"NO_URGENTE_2":0},
@@ -115,6 +136,8 @@ Ver [`docs/adr`](docs/adr).
 | [0002](docs/adr/0002-outbox-y-formato-de-eventos.md) | Transactional outbox, garantías de entrega y formato JSON de los eventos |
 | [0003](docs/adr/0003-monitor-de-sla-y-escalamiento-idempotente.md) | Monitor de SLA por scheduler reactivo y escalamiento idempotente |
 | [0004](docs/adr/0004-vista-de-urgencias-en-redis.md) | Vista de urgencias materializada en Redis desde `triaje.eventos` |
+| [0005](docs/adr/0005-rag-vector-store-y-anti-alucinacion.md) | RAG: embeddings locales, vector store en memoria, umbral calibrado y anti-alucinación en tres capas |
+| [0006](docs/adr/0006-modo-degradado-del-asistente.md) | Modo degradado del asistente: TimeLimiter + CircuitBreaker, 503 explícito |
 
 ## Supuestos ante ambigüedades del enunciado
 
@@ -142,7 +165,7 @@ Ver [`docs/adr`](docs/adr).
 - [x] 4. SLA y escalamiento idempotente (RF-03, RN-03)
 - [x] 5. Reporte de operación con SQL avanzado (RF-05)
 - [x] 6. Asistente — vista de urgencias desde Kafka en Redis (RF-04 B)
-- [ ] 7. Asistente — RAG con citas, anti-alucinación y modo degradado (RF-04 A, RN-05)
+- [x] 7. Asistente — RAG con citas, anti-alucinación y modo degradado (RF-04 A, RN-05)
 - [ ] 8. Servicio de alertas (RF-06)
 - [ ] 9. Seguridad y observabilidad
 - [ ] 10. Tests de integración con Testcontainers
