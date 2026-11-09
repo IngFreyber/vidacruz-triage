@@ -89,6 +89,22 @@ entraron a consulta (o tuvieron alta directa) cuentan en los totales pero no en 
 **Inmutabilidad de la auditoría:** además de no existir endpoint de borrado, un trigger de PostgreSQL
 rechaza `UPDATE`, `DELETE` y `TRUNCATE` sobre `auditoria_clinica`.
 
+## API del asistente (`asistente-service`, puerto 8082)
+
+| Método | Ruta | Descripción | Respuestas |
+|---|---|---|---|
+| `GET` | `/asistente/estado-urgencias` | Pacientes activos (no `ALTA`) por nivel, en tiempo real (RF-04 B) | 200, 503 |
+
+```json
+{"totalActivos":6,"porNivel":{"CRITICO":2,"URGENTE":1,"URGENTE_2":0,"NO_URGENTE":3,"NO_URGENTE_2":0},
+ "actualizadoEn":"2026-11-09T22:39:18.630Z","fuente":"kafka:triaje.eventos"}
+```
+
+La vista se reconstruye **solo** consumiendo `triaje.eventos` (nunca llama a la API de triaje) y se guarda en
+Redis. Cada evento se aplica con un script Lua atómico e idempotente: deduplica por `eventId`, trata `ALTA` como
+estado terminal y descarta eventos obsoletos. Si Redis cae, el consumidor pausa la partición y reintenta, y el
+endpoint responde 503; al recuperarse, la vista se pone al día sola (ver ADR-0004).
+
 ## Decisiones de arquitectura (ADR)
 
 Ver [`docs/adr`](docs/adr).
@@ -98,6 +114,7 @@ Ver [`docs/adr`](docs/adr).
 | [0001](docs/adr/0001-descomposicion-en-microservicios.md) | Descomposición en tres microservicios y arquitectura hexagonal |
 | [0002](docs/adr/0002-outbox-y-formato-de-eventos.md) | Transactional outbox, garantías de entrega y formato JSON de los eventos |
 | [0003](docs/adr/0003-monitor-de-sla-y-escalamiento-idempotente.md) | Monitor de SLA por scheduler reactivo y escalamiento idempotente |
+| [0004](docs/adr/0004-vista-de-urgencias-en-redis.md) | Vista de urgencias materializada en Redis desde `triaje.eventos` |
 
 ## Supuestos ante ambigüedades del enunciado
 
@@ -124,7 +141,7 @@ Ver [`docs/adr`](docs/adr).
 - [x] 3. Publicación de eventos (outbox → Kafka)
 - [x] 4. SLA y escalamiento idempotente (RF-03, RN-03)
 - [x] 5. Reporte de operación con SQL avanzado (RF-05)
-- [ ] 6. Asistente — vista de urgencias desde Kafka en Redis (RF-04 B)
+- [x] 6. Asistente — vista de urgencias desde Kafka en Redis (RF-04 B)
 - [ ] 7. Asistente — RAG con citas, anti-alucinación y modo degradado (RF-04 A, RN-05)
 - [ ] 8. Servicio de alertas (RF-06)
 - [ ] 9. Seguridad y observabilidad

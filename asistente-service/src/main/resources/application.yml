@@ -1,10 +1,39 @@
 spring:
   application:
     name: asistente-service
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      ssl:
+        enabled: ${REDIS_SSL:false}
+      timeout: 2s
+  jackson:
+    default-property-inclusion: non_null
+  webflux:
+    problemdetails:
+      enabled: true
 
 server:
   port: ${SERVER_PORT:8082}
   shutdown: graceful
+  error:
+    include-stacktrace: never
+
+asistente:
+  # RF-04 parte B: vista de urgencias reconstruida desde triaje.eventos (nunca desde la API de triaje).
+  urgencias:
+    topic: ${KAFKA_TOPIC_EVENTOS:triaje.eventos}
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    grupo-consumidor: ${URGENCIAS_GRUPO_CONSUMIDOR:asistente-vista-urgencias}
+    habilitado: ${URGENCIAS_CONSUMIDOR_HABILITADO:true}
+    ttl-deduplicacion: ${URGENCIAS_TTL_DEDUPLICACION:7d}
+    ttl-paciente-alta: ${URGENCIAS_TTL_PACIENTE_ALTA:7d}
+
+logging:
+  level:
+    org.apache.kafka: WARN
 
 management:
   endpoints:
