@@ -1,10 +1,51 @@
 spring:
   application:
     name: triage-service
+  r2dbc:
+    url: r2dbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:triage}
+    username: ${DB_USER:triage}
+    password: ${DB_PASSWORD}
+    pool:
+      initial-size: 5
+      max-size: 20
+      max-idle-time: 30m
+      validation-query: SELECT 1
+  flyway:
+    # Flyway usa JDBC solo durante el arranque (no en el event loop).
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:triage}
+    user: ${DB_USER:triage}
+    password: ${DB_PASSWORD}
+  jackson:
+    default-property-inclusion: non_null
+    deserialization:
+      fail-on-unknown-properties: false
+      # Un decimal en un campo entero (p. ej. edad 30.7) es un error, no se trunca en silencio.
+      accept-float-as-int: false
+  webflux:
+    problemdetails:
+      enabled: true
 
 server:
   port: ${SERVER_PORT:8081}
   shutdown: graceful
+  error:
+    include-stacktrace: never
+
+triage:
+  # RN-02: SLA por nivel (formato Duration: 5m, 30s, 2h). Se sobreescriben por variables de entorno,
+  # p. ej. TRIAGE_SLA_CRITICO=30s, para probar el escalamiento sin esperar.
+  sla:
+    critico: ${TRIAGE_SLA_CRITICO:5m}
+    urgente: ${TRIAGE_SLA_URGENTE:10m}
+    urgente-2: ${TRIAGE_SLA_URGENTE_2:30m}
+    no-urgente: ${TRIAGE_SLA_NO_URGENTE:60m}
+    no-urgente-2: ${TRIAGE_SLA_NO_URGENTE_2:120m}
+  quejas-administrativas:
+    - documentos
+    - recolección de resultados
+    - renovación de recetario
+    - vacunación
+    - seguimiento
 
 management:
   endpoints:

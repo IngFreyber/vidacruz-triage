@@ -28,9 +28,34 @@ Requisitos: Docker. (Para desarrollo: JDK 21.)
 
 ```bash
 cp .env.example .env       # completar LLM_API_KEY (Google AI Studio)
-docker compose up -d       # Etapa 0: levanta PostgreSQL, Kafka (topic triaje.eventos) y Redis
-./mvnw verify              # compila y ejecuta los tests
+docker compose up -d       # levanta PostgreSQL, Kafka (topic triaje.eventos) y Redis
+./mvnw verify              # compila y ejecuta los tests (los de integración usan Testcontainers)
 ```
+
+Para ejecutar el servicio de triaje fuera de Docker (desarrollo). PostgreSQL se publica en el puerto
+**15432** del host para no chocar con instalaciones locales:
+
+```bash
+DB_PORT=15432 DB_PASSWORD=triage_local_pwd java -jar triage-service/target/triage-service.jar
+```
+
+## API de triage (`triage-service`, puerto 8081)
+
+| Método | Ruta | Descripción | Respuestas |
+|---|---|---|---|
+| `POST` | `/triage/pacientes` | Registra y clasifica (RF-01) | 201 + `Location`, 400 |
+| `GET` | `/triage/pacientes/{id}` | Datos completos, estado, flags y tiempo en el estado actual | 200, 404 |
+| `PATCH` | `/triage/pacientes/{id}/estado` | Transición de estado `{"estado": "EN_CONSULTA"}` (RF-02) | 200, 400, 404, 409 |
+| `GET` | `/triage/pacientes/{id}/auditoria` | Bitácora clínica en solo lectura (RN-04) | 200, 404 |
+
+Los errores siguen el estándar **RFC 7807** (`application/problem+json`) con `type`, `title`, `status`,
+`detail`, `instance`, `timestamp` y, en validaciones, `errores: [{campo, mensaje}]`.
+
+**Atomicidad:** paciente, entrada de auditoría y evento (tabla `outbox_eventos`) se escriben en la misma
+transacción R2DBC. **Concurrencia:** las actualizaciones usan control optimista por versión; ante un
+conflicto se relee y reintenta, y la transición se vuelve a validar con el estado fresco.
+**Inmutabilidad de la auditoría:** además de no existir endpoint de borrado, un trigger de PostgreSQL
+rechaza `UPDATE`, `DELETE` y `TRUNCATE` sobre `auditoria_clinica`.
 
 ## Decisiones de arquitectura (ADR)
 
@@ -56,7 +81,7 @@ Ver [`docs/adr`](docs/adr).
 
 - [x] 0. Andamiaje: monorepo Maven, infraestructura local, ADR inicial
 - [x] 1. Dominio de triage: validaciones, clasificación RN-01, SLA RN-02, máquina de estados
-- [ ] 2. Persistencia y API de triage (RF-01, RF-02, RN-04)
+- [x] 2. Persistencia y API de triage (RF-01, RF-02, RN-04)
 - [ ] 3. Publicación de eventos (outbox → Kafka)
 - [ ] 4. SLA y escalamiento idempotente (RF-03, RN-03)
 - [ ] 5. Reporte de operación con SQL avanzado (RF-05)
