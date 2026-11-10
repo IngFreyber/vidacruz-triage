@@ -126,6 +126,25 @@ Redis. Cada evento se aplica con un script Lua atómico e idempotente: deduplica
 estado terminal y descarta eventos obsoletos. Si Redis cae, el consumidor pausa la partición y reintenta, y el
 endpoint responde 503; al recuperarse, la vista se pone al día sola (ver ADR-0004).
 
+## API de alertas (`alertas-service`, puerto 8083) — RF-06
+
+| Método | Ruta | Descripción | Respuestas |
+|---|---|---|---|
+| `GET` | `/alertas/stream` | **SSE** para tableros: pendientes al conectar + `alerta` / `alerta_atendida` en tiempo real | 200 |
+| `GET` | `/alertas?estado=PENDIENTE&limite=50` | Historial (más recientes primero) | 200, 400 |
+| `GET` | `/alertas/{id}` | Detalle de una alerta | 200, 404 |
+| `POST` | `/alertas/{id}/atencion` | Un profesional toma la alerta `{"atendidaPor":"Dra. Salas"}` (idempotente) | 200, 400, 404 |
+
+```bash
+curl -N localhost:8083/alertas/stream     # deja la conexión abierta y muestra las alertas al escalar
+```
+
+**Decisión (ADR-0007):** el equipo médico de turno ve las alertas en tiempo real en un tablero conectado por
+**Server-Sent Events**, y opcionalmente recibe una **Adaptive Card en Microsoft Teams** (`TEAMS_WEBHOOK_URL`, webhook
+de Workflows). Cada alerta queda en un historial con **quién la tomó y cuándo**. Es idempotente por `eventId`;
+Redis Pub/Sub la difunde a todas las réplicas, y una caída de Teams (con retry y circuit breaker) no afecta al
+tablero ni al historial.
+
 ## Decisiones de arquitectura (ADR)
 
 Ver [`docs/adr`](docs/adr).
@@ -138,6 +157,7 @@ Ver [`docs/adr`](docs/adr).
 | [0004](docs/adr/0004-vista-de-urgencias-en-redis.md) | Vista de urgencias materializada en Redis desde `triaje.eventos` |
 | [0005](docs/adr/0005-rag-vector-store-y-anti-alucinacion.md) | RAG: embeddings locales, vector store en memoria, umbral calibrado y anti-alucinación en tres capas |
 | [0006](docs/adr/0006-modo-degradado-del-asistente.md) | Modo degradado del asistente: TimeLimiter + CircuitBreaker, 503 explícito |
+| [0007](docs/adr/0007-alertas-de-escalamiento.md) | **RF-06**: alertas por SSE + Microsoft Teams, historial con atención, supuestos y alternativas |
 
 ## Supuestos ante ambigüedades del enunciado
 
@@ -166,7 +186,7 @@ Ver [`docs/adr`](docs/adr).
 - [x] 5. Reporte de operación con SQL avanzado (RF-05)
 - [x] 6. Asistente — vista de urgencias desde Kafka en Redis (RF-04 B)
 - [x] 7. Asistente — RAG con citas, anti-alucinación y modo degradado (RF-04 A, RN-05)
-- [ ] 8. Servicio de alertas (RF-06)
+- [x] 8. Servicio de alertas (RF-06)
 - [ ] 9. Seguridad y observabilidad
 - [ ] 10. Tests de integración con Testcontainers
 - [ ] 11. Contenerización completa (`docker compose up`)

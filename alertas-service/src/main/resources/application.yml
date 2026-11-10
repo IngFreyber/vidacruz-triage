@@ -1,10 +1,66 @@
 spring:
   application:
     name: alertas-service
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      ssl:
+        enabled: ${REDIS_SSL:false}
+      timeout: 2s
+  jackson:
+    default-property-inclusion: non_null
+  webflux:
+    problemdetails:
+      enabled: true
 
 server:
   port: ${SERVER_PORT:8083}
   shutdown: graceful
+  error:
+    include-stacktrace: never
+
+# RF-06: alertas de escalamiento (ver ADR-0007).
+alertas:
+  topic: ${KAFKA_TOPIC_EVENTOS:triaje.eventos}
+  bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+  grupo-consumidor: ${ALERTAS_GRUPO_CONSUMIDOR:alertas-escalamientos}
+  habilitado: ${ALERTAS_CONSUMIDOR_HABILITADO:true}
+  offset-inicial: ${ALERTAS_OFFSET_INICIAL:latest}
+  retencion: ${ALERTAS_RETENCION:30d}
+  heartbeat: ${ALERTAS_SSE_HEARTBEAT:15s}
+  teams:
+    # URL de un webhook de Workflows de Teams. Contiene un token: SOLO por variable de entorno. Vacía = deshabilitado.
+    webhook-url: ${TEAMS_WEBHOOK_URL:}
+    timeout: ${TEAMS_TIMEOUT:5s}
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      teams:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 4
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 60s
+        permitted-number-of-calls-in-half-open-state: 1
+        automatic-transition-from-open-to-half-open-enabled: true
+        register-health-indicator: true
+        allow-health-indicator-to-fail: false
+  retry:
+    instances:
+      teams:
+        max-attempts: 3
+        wait-duration: 1s
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        ignore-exceptions:
+          - io.github.resilience4j.circuitbreaker.CallNotPermittedException
+
+logging:
+  level:
+    org.apache.kafka: WARN
 
 management:
   endpoints:
