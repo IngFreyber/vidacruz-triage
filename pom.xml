@@ -31,6 +31,9 @@
         <reactor-kafka.version>1.3.25</reactor-kafka.version>
         <blockhound.version>1.0.18.RELEASE</blockhound.version>
         <resilience4j.version>2.4.0</resilience4j.version>
+        <jacoco.version>0.8.16</jacoco.version>
+        <!-- JaCoCo completa esta propiedad con su agente; vacía por defecto para que @{argLine} siempre resuelva -->
+        <argLine/>
     </properties>
 
     <dependencyManagement>
@@ -62,11 +65,42 @@
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
                     <configuration>
-                        <!-- BlockHound instrumenta clases del JDK para detectar llamadas bloqueantes en el event loop -->
-                        <argLine>-XX:+AllowRedefinitionToAddDeleteMethods -XX:+EnableDynamicAgentLoading</argLine>
+                        <!-- @{argLine}: agente de JaCoCo. Las opciones -XX: son para BlockHound, que instrumenta clases
+                             del JDK para detectar llamadas bloqueantes en el event loop -->
+                        <argLine>@{argLine} -XX:+AllowRedefinitionToAddDeleteMethods -XX:+EnableDynamicAgentLoading</argLine>
                     </configuration>
                 </plugin>
             </plugins>
         </pluginManagement>
+
+        <plugins>
+            <!-- Cobertura de tests (unitarios + integración) por servicio: target/site/jacoco/index.html -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
+                <configuration>
+                    <excludes>
+                        <!-- Clases main de Spring Boot: solo arrancan el contexto -->
+                        <exclude>com/vidacruz/*/*Application.class</exclude>
+                    </excludes>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>agente</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>reporte</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
     </build>
 </project>

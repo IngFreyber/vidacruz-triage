@@ -29,7 +29,7 @@ Requisitos: Docker. (Para desarrollo: JDK 21.)
 ```bash
 cp .env.example .env       # completar LLM_API_KEY (https://aistudio.google.com/api-keys, plan gratuito)
 docker compose up -d       # levanta PostgreSQL, Kafka (topic triaje.eventos) y Redis
-./mvnw verify              # compila y ejecuta los tests (los de integración usan Testcontainers)
+./mvnw verify              # compila, ejecuta los 217 tests (Testcontainers) y genera la cobertura
 ```
 
 Para ejecutar el servicio de triaje fuera de Docker (desarrollo). PostgreSQL se publica en el puerto
@@ -146,6 +146,42 @@ de Workflows). Cada alerta queda en un historial con **quién la tomó y cuándo
 Redis Pub/Sub la difunde a todas las réplicas, y una caída de Teams (con retry y circuit breaker) no afecta al
 tablero ni al historial.
 
+## Tests
+
+```bash
+./mvnw verify      # 217 tests (unitarios + integración) y reporte de cobertura por servicio
+```
+
+Los tests de integración usan **Testcontainers** con los mismos motores de producción (PostgreSQL 16, Kafka 3.9,
+Redis 7). El **LLM está simulado** (`@MockitoBean ChatModel`): los tests no necesitan API key ni red, y los
+embeddings y la recuperación sí son reales. **BlockHound** está activo en todos los tests de integración: si
+algo bloquea el event loop, el test falla.
+
+| Servicio | Tests | Cobertura de líneas | Cobertura de ramas | Reporte |
+|---|---|---|---|---|
+| `triage-service` | 152 | **96 %** | 77 % | `triage-service/target/site/jacoco/index.html` |
+| `asistente-service` | 45 | **93 %** | 67 % | `asistente-service/target/site/jacoco/index.html` |
+| `alertas-service` | 20 | **90 %** | 67 % | `alertas-service/target/site/jacoco/index.html` |
+
+### Matriz de trazabilidad: requerimiento → tests
+
+| Requerimiento | Qué se verifica | Tests |
+|---|---|---|
+| **RN-01** Clasificación | E1–E6 del enunciado, límites exactos de cada criterio (FC 39/40/89/90/120/121, SpO2, PAS, GCS, temperatura, dolor), mayor gravedad gana, quejas administrativas | `ClasificadorTriageTest` (unitario), `PacienteApiIntegrationTest.Registro` (E1–E6 por API) |
+| **RN-02** SLA | SLA por nivel y redondeo de minutos | `PoliticaSlaTest`, `PacienteTest`, `PacienteApiIntegrationTest` |
+| **RF-01** Registro y validación | Cada rango fuera de límite (ambos extremos) → 400 con campo, diastólica < sistólica, tipos y decimales inválidos, JSON mal formado, todas las violaciones a la vez, respuesta con `id`, `nivel`, `slaMinutos`, `estado`, `fechaRegistro` ISO 8601 | `ValidadorRegistroTest`, `PacienteApiIntegrationTest.Registro` |
+| **RF-02** Estados | Matriz completa 3×3 de transiciones, 200/409/404/400, concurrencia optimista (6 peticiones simultáneas → 1 gana) | `EstadoPacienteTest`, `PacienteTest`, `PacienteApiIntegrationTest.FlujoEstados` |
+| **RF-03 / RN-03** Escalamiento idempotente | Escala al vencer el SLA y no antes; una sola vez ante evaluaciones repetidas y **3 monitores concurrentes**; nunca `EN_CONSULTA` ni `ALTA`; scheduler real con SLA de 1 s | `PacienteTest.Escalamiento`, `EscalamientoIntegrationTest`, `MonitorSlaIntegrationTest` |
+| **RN-04** Auditoría | Cada cambio auditado; una transición inválida no deja rastro; **la base de datos rechaza `UPDATE` y `DELETE`**; no existe endpoint de borrado | `PacienteApiIntegrationTest.Auditoria` |
+| **RF-05** Reporte SQL | Conteos por hora y nivel, promedio y **p95 calculados a mano** con datos controlados, horas vacías, resumen con ROLLUP, rango semiabierto, zonas horarias, validaciones | `ReporteOperacionIntegrationTest` |
+| **Kafka / outbox** | Orden por paciente, key y headers, marca de publicado, falla parcial de Kafka, traza W3C en el evento | `EventosKafkaIntegrationTest`, `OutboxRelayTest` |
+| **RF-04 A / RN-05** RAG | Ejemplos 1 y 2 citan PROTO-001 y PROTO-002; **ejemplo 3 (diabetes) no invoca al LLM**; cita inventada, cita no recuperada, texto sin JSON y `sinInformacion` → sin contenido clínico | `ConsultaRagIntegrationTest`, `ValidadorCitasTest`, `CorpusProtocolosTest` |
+| **Modo degradado** | LLM con error → 503 con `Retry-After`; LLM lento → TimeLimiter; circuito abierto tras 4 fallas (0 llamadas después); "sin protocolo" funciona con el LLM caído | `ConsultaRagIntegrationTest.ModoDegradado` |
+| **RF-04 B** Vista de urgencias | Ciclo completo, alta directa, duplicados, **20 entregas concurrentes → 1**, alta terminal, eventos obsoletos, mensaje corrupto descartado, Redis caído → 503 | `VistaUrgenciasRedisTest`, `EstadoUrgenciasKafkaIntegrationTest`, `ConsumidorEventosTriajeTest`, `EstadoUrgenciasControllerTest` |
+| **RF-06** Alertas | Alerta y Adaptive Card en Teams, reentrega idempotente, otros eventos ignorados, Teams caído (3 reintentos, sin bloquear), SSE en vivo, primera confirmación gana, reconexión de tableros | `AlertasIntegrationTest`, `AlertaTest` |
+| **Seguridad** | 401 sin clave o con clave incorrecta, probes públicas, API key por parámetro solo en el SSE | `SeguridadYObservabilidadIntegrationTest` (×3 servicios) |
+| **Observabilidad** | Métricas en `/actuator/prometheus`, `X-Trace-Id`, BlockHound activo | `SeguridadYObservabilidadIntegrationTest` (×3 servicios) |
+
 ## Seguridad y observabilidad (ADR-0008)
 
 **Autenticación:** todas las rutas exigen la cabecera `X-API-Key` (claves por servicio desde `TRIAGE_API_KEY`,
@@ -214,7 +250,7 @@ Ver [`docs/adr`](docs/adr).
 - [x] 7. Asistente — RAG con citas, anti-alucinación y modo degradado (RF-04 A, RN-05)
 - [x] 8. Servicio de alertas (RF-06)
 - [x] 9. Seguridad y observabilidad
-- [ ] 10. Tests de integración con Testcontainers
+- [x] 10. Tests de integración con Testcontainers + cobertura (JaCoCo) y matriz de trazabilidad
 - [ ] 11. Contenerización completa (`docker compose up`)
 - [ ] 12. Kubernetes / Azure
 - [ ] 13. Documentación final
