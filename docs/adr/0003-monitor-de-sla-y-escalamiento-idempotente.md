@@ -23,9 +23,15 @@ ser configurables para poder probar sin esperar decenas de minutos.
    Flag `escalado`, entrada de auditoría y evento `paciente_escalado` (outbox) se confirman juntos.
 3. **El SLA se fija por paciente al registrarlo** (`sla_segundos`). Cambiar la configuración afecta solo a los
    nuevos registros, nunca retroactivamente a quienes ya esperan.
-4. **Configuración por entorno:** `TRIAGE_SLA_<NIVEL>` (formato Duration: `30s`, `5m`) y
-   `TRIAGE_ESCALAMIENTO_INTERVALO`. Con `TRIAGE_SLA_CRITICO=20s` y `TRIAGE_ESCALAMIENTO_INTERVALO=3s` el
+4. **Configuración por entorno:** `SLA_<NIVEL>` (formato Duration: `30s`, `5m`) y
+   `TRIAGE_ESCALAMIENTO_INTERVALO`. Con `SLA_CRITICO=20s` y `TRIAGE_ESCALAMIENTO_INTERVALO=3s` el
    escalamiento se observa en ~20 s (verificado contra el docker-compose).
+
+> **Nota sobre nombres de variables (encontrado al probar en Docker).** Las variables **no** se llaman
+> `TRIAGE_SLA_*`. Spring Boot vincula cualquier variable de entorno con ese prefijo directamente al mapa
+> `triage.sla` (convirtiendo `_` en `.`), de modo que `TRIAGE_SLA_NO_URGENTE` producía la clave `no`, que no es
+> un nivel válido, y el servicio no arrancaba. Se usan `SLA_CRITICO`, `SLA_URGENTE`, `SLA_URGENTE_2`,
+> `SLA_NO_URGENTE` y `SLA_NO_URGENTE_2`, referenciadas explícitamente desde `application.yml`.
 
 ## Alternativas consideradas
 

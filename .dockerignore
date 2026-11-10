@@ -1,0 +1,14 @@
+# Nada de esto debe llegar al contexto de build (tamaño y, sobre todo, secretos).
+.env
+*.env.local
+.git
+.github
+.idea
+.vscode
+.claude
+*.iml
+*.pdf
+**/target
+docs
+k8s
+infra/azure

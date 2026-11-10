@@ -22,20 +22,63 @@ Java 21 · Spring Boot 3.5 · Spring WebFlux · R2DBC PostgreSQL · Reactor Kafk
 Spring AI (Google Gemini vía API compatible con OpenAI + embeddings ONNX locales) · Resilience4j ·
 Micrometer / Prometheus / OpenTelemetry · Testcontainers · Docker · Kubernetes (Azure)
 
-## Ejecución local
+## Ejecución local — un solo comando
 
-Requisitos: Docker. (Para desarrollo: JDK 21.)
+Requisitos: **Docker** (con ~8 GB de memoria asignada) y **~5 GB libres** para las imágenes. No hace falta Java ni
+Maven: todo se compila dentro de Docker.
 
 ```bash
-cp .env.example .env       # completar LLM_API_KEY (https://aistudio.google.com/api-keys, plan gratuito)
-docker compose up -d       # levanta PostgreSQL, Kafka (topic triaje.eventos) y Redis
-./mvnw verify              # compila, ejecuta los 217 tests (Testcontainers) y genera la cobertura
+cp .env.example .env          # opcional: LLM_API_KEY (https://aistudio.google.com/api-keys, plan gratuito)
+docker compose up --build     # PostgreSQL, Kafka, Redis y los 3 microservicios
 ```
 
-Para ejecutar el servicio de triaje fuera de Docker (desarrollo). PostgreSQL se publica en el puerto
-**15432** del host para no chocar con instalaciones locales:
+Listo cuando `docker compose ps` muestra los tres servicios `healthy`: **triage :8081**, **asistente :8082** y
+**alertas :8083**. Las API keys de ejemplo de `.env.example` sirven tal cual en local. Sin `LLM_API_KEY` todo
+funciona salvo las consultas al asistente que necesitan el LLM, que responden 503 (modo degradado).
 
 ```bash
+# Prueba rápida (clave de ejemplo de .env.example)
+curl -X POST localhost:8081/triage/pacientes -H 'X-API-Key: cambia-esta-clave-triage' \
+     -H 'Content-Type: application/json' \
+     -d '{"nombreCompleto":"Ana Pérez","edad":58,"frecuenciaCardiaca":130,"presionSistolica":180,
+          "presionDiastolica":110,"spo2":97,"temperatura":36.8,"dolor":8,"gcs":15,"quejaPrincipal":"Dolor torácico"}'
+```
+
+**Ver escalamientos y alertas en segundos** (en lugar de esperar los SLA reales):
+
+```bash
+SLA_CRITICO=20s TRIAGE_ESCALAMIENTO_INTERVALO=3s docker compose up -d
+curl -N "localhost:8083/alertas/stream?api_key=cambia-esta-clave-alertas"     # tablero SSE
+```
+
+**Trazado distribuido en Jaeger** (http://localhost:16686): una petición a triage aparece como una sola traza que
+continúa en los consumidores de Kafka del asistente y de alertas.
+
+```bash
+TRACING_EXPORTAR=true docker compose --profile observabilidad up -d
+```
+
+### Imágenes
+
+| Imagen | Base | Tamaño | Notas |
+|---|---|---|---|
+| `vidacruz/triage-service` | `eclipse-temurin:21-jre-alpine` | 412 MB | |
+| `vidacruz/alertas-service` | `eclipse-temurin:21-jre-alpine` | 419 MB | |
+| `vidacruz/asistente-service` | `eclipse-temurin:21-jre-noble` | 1.7 GB | Incluye el modelo ONNX (~460 MB) y ONNX Runtime, que necesita glibc; por eso no usa Alpine |
+
+Dockerfiles multi-stage: compilación con Maven (caché de dependencias con BuildKit), capas de Spring Boot
+(dependencias separadas del código), usuario sin privilegios, `MaxRAMPercentage=75`, `ExitOnOutOfMemoryError` y
+`HEALTHCHECK` contra la probe de readiness. El modelo de embeddings va **dentro** de la imagen: el contenedor no
+descarga nada al arrancar.
+
+### Desarrollo sin Docker
+
+`./mvnw verify` compila y ejecuta los 217 tests (Testcontainers) con cobertura. Para ejecutar un servicio
+fuera de Docker, con la infraestructura de compose (PostgreSQL publicado en **15432** para no chocar con
+instalaciones locales):
+
+```bash
+docker compose up -d postgres kafka kafka-init redis
 set -a; . ./.env; set +a     # carga las API keys y la configuración local
 DB_PORT=15432 DB_PASSWORD=triage_local_pwd java -jar triage-service/target/triage-service.jar
 ```
@@ -64,7 +107,7 @@ escala, una única vez, a los que superaron su SLA (flag persistente, auditoría
 Para verlo en segundos:
 
 ```bash
-DB_PORT=15432 DB_PASSWORD=triage_local_pwd TRIAGE_SLA_CRITICO=20s TRIAGE_ESCALAMIENTO_INTERVALO=3s \
+DB_PORT=15432 DB_PASSWORD=triage_local_pwd SLA_CRITICO=20s TRIAGE_ESCALAMIENTO_INTERVALO=3s \
   java -jar triage-service/target/triage-service.jar
 ```
 
@@ -251,6 +294,6 @@ Ver [`docs/adr`](docs/adr).
 - [x] 8. Servicio de alertas (RF-06)
 - [x] 9. Seguridad y observabilidad
 - [x] 10. Tests de integración con Testcontainers + cobertura (JaCoCo) y matriz de trazabilidad
-- [ ] 11. Contenerización completa (`docker compose up`)
+- [x] 11. Contenerización completa (`docker compose up --build`), Jaeger opcional
 - [ ] 12. Kubernetes / Azure
 - [ ] 13. Documentación final

@@ -36,14 +36,14 @@ server:
 
 triage:
   # RN-02: SLA por nivel (formato Duration: 5m, 30s, 2h). Se sobreescriben por variables de entorno,
-  # p. ej. TRIAGE_SLA_CRITICO=30s, para probar el escalamiento sin esperar.
+  # p. ej. SLA_CRITICO=30s, para probar el escalamiento sin esperar.
   sla:
-    critico: ${TRIAGE_SLA_CRITICO:5m}
-    urgente: ${TRIAGE_SLA_URGENTE:10m}
-    urgente-2: ${TRIAGE_SLA_URGENTE_2:30m}
-    no-urgente: ${TRIAGE_SLA_NO_URGENTE:60m}
-    no-urgente-2: ${TRIAGE_SLA_NO_URGENTE_2:120m}
-  # RF-03: monitor de SLA. Con TRIAGE_SLA_CRITICO=30s y TRIAGE_ESCALAMIENTO_INTERVALO=5s se observa el
+    critico: ${SLA_CRITICO:5m}
+    urgente: ${SLA_URGENTE:10m}
+    urgente-2: ${SLA_URGENTE_2:30m}
+    no-urgente: ${SLA_NO_URGENTE:60m}
+    no-urgente-2: ${SLA_NO_URGENTE_2:120m}
+  # RF-03: monitor de SLA. Con SLA_CRITICO=30s y TRIAGE_ESCALAMIENTO_INTERVALO=5s se observa el
   # escalamiento de un paciente CRITICO en menos de un minuto.
   escalamiento:
     habilitado: ${TRIAGE_ESCALAMIENTO_HABILITADO:true}

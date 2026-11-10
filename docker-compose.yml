@@ -1,8 +1,26 @@
 name: vidacruz
 
-# Etapa 0: solo infraestructura. Los microservicios se agregan en la Etapa 11.
+# Levanta TODO el sistema con un solo comando (requiere un .env copiado de .env.example):
+#
+#   docker compose up --build
+#
+# Con trazado distribuido visible en Jaeger (http://localhost:16686):
+#
+#   TRACING_EXPORTAR=true docker compose --profile observabilidad up --build
+#
+# Servicios: triage :8081 · asistente :8082 · alertas :8083 (todos exigen la cabecera X-API-Key).
+
+x-servicio-java: &servicio-java
+  restart: unless-stopped
+  environment: &entorno-comun
+    KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    LOG_FORMATO: ${LOG_FORMATO:-ecs}
+    TRACING_MUESTREO: ${TRACING_MUESTREO:-1.0}
+    MANAGEMENT_OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
+    MANAGEMENT_OTLP_TRACING_EXPORT_ENABLED: ${TRACING_EXPORTAR:-false}
 
 services:
+  # ------------------------------------------------------------------ infraestructura
   postgres:
     image: postgres:16-alpine
     environment:
@@ -65,6 +83,85 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  # ------------------------------------------------------------------ microservicios
+  triage:
+    <<: *servicio-java
+    build:
+      context: .
+      dockerfile: triage-service/Dockerfile
+    image: vidacruz/triage-service:local
+    ports:
+      - "8081:8081"
+    environment:
+      <<: *entorno-comun
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-triage}
+      DB_USER: ${POSTGRES_USER:-triage}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-triage_local_pwd}
+      TRIAGE_API_KEY: ${TRIAGE_API_KEY:?Defina TRIAGE_API_KEY en .env (ver .env.example)}
+      # SLA y frecuencia del monitor configurables (RF-03), p. ej. SLA_CRITICO=30s para probar escalamientos.
+      SLA_CRITICO: ${SLA_CRITICO:-5m}
+      SLA_URGENTE: ${SLA_URGENTE:-10m}
+      SLA_URGENTE_2: ${SLA_URGENTE_2:-30m}
+      SLA_NO_URGENTE: ${SLA_NO_URGENTE:-60m}
+      SLA_NO_URGENTE_2: ${SLA_NO_URGENTE_2:-120m}
+      TRIAGE_ESCALAMIENTO_INTERVALO: ${TRIAGE_ESCALAMIENTO_INTERVALO:-30s}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+
+  asistente:
+    <<: *servicio-java
+    build:
+      context: .
+      dockerfile: asistente-service/Dockerfile
+    image: vidacruz/asistente-service:local
+    ports:
+      - "8082:8082"
+    environment:
+      <<: *entorno-comun
+      REDIS_HOST: redis
+      ASISTENTE_API_KEY: ${ASISTENTE_API_KEY:?Defina ASISTENTE_API_KEY en .env (ver .env.example)}
+      # Sin key el asistente arranca igual: las consultas que requieren LLM responden 503 (modo degradado).
+      LLM_API_KEY: ${LLM_API_KEY:-sin-configurar}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai}
+      LLM_MODEL: ${LLM_MODEL:-gemini-3.5-flash}
+    depends_on:
+      redis:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+
+  alertas:
+    <<: *servicio-java
+    build:
+      context: .
+      dockerfile: alertas-service/Dockerfile
+    image: vidacruz/alertas-service:local
+    ports:
+      - "8083:8083"
+    environment:
+      <<: *entorno-comun
+      REDIS_HOST: redis
+      ALERTAS_API_KEY: ${ALERTAS_API_KEY:?Defina ALERTAS_API_KEY en .env (ver .env.example)}
+      TEAMS_WEBHOOK_URL: ${TEAMS_WEBHOOK_URL:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+
+  # ------------------------------------------------------------------ observabilidad (opcional)
+  jaeger:
+    image: jaegertracing/jaeger:2.11.0
+    profiles: ["observabilidad"]
+    ports:
+      - "16686:16686"   # interfaz web
+      - "4318:4318"     # OTLP/HTTP
 
 volumes:
   pgdata:
