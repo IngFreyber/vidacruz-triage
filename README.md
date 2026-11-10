@@ -1,26 +1,113 @@
 # VidaCruz — Sistema de triaje digital con asistente clínico
 
-Backend reactivo (Spring Boot 3 + WebFlux + Project Reactor) compuesto por tres microservicios
-que se integran de forma asíncrona mediante Kafka.
+Backend **reactivo de punta a punta** (Spring Boot 3 + WebFlux + Project Reactor) para las 12 salas de urgencias de
+VidaCruz:
 
-> 🚧 Proyecto en construcción por etapas. Ver [Plan de etapas](#plan-de-etapas).
+- **clasifica** a los pacientes según reglas clínicas objetivas;
+- **vigila el SLA** de cada nivel y **escala** de forma automática e idempotente;
+- **alerta** al equipo médico en tiempo real;
+- ofrece a los médicos un **asistente con IA generativa** que responde **solo** con los protocolos oficiales y siempre
+  cita la fuente.
 
-## Microservicios
+Son tres microservicios Java 21 que se integran de forma asíncrona por Kafka.
 
-| Servicio | Puerto | Responsabilidad | Persistencia |
+## Para el evaluador
+
+| Entregable | Dónde |
+|---|---|
+| 1. Repositorio | Este repositorio (historial de commits por etapa, cada uno funcionando) |
+| 2. README con ejecución en un comando, arquitectura con diagrama, tecnologías y decisiones | Este documento |
+| 3. Tests automatizados | `./mvnw verify`: **218 tests** con Testcontainers, cobertura del 90–96 % y [matriz de trazabilidad](#matriz-de-trazabilidad-requerimiento--tests) |
+| 4. Aplicación desplegada en Azure + manifiestos | **http://57.162.225.46** ([detalle](#despliegue-en-azure-aks)) · [`k8s/`](k8s) · [`infra/azure/`](infra/azure) |
+| 5. ADR (mínimo 2) | **9 ADR** en [`docs/adr`](docs/adr) |
+
+- **Probar en 1 minuto:** `docker compose up --build` y luego la colección [`docs/api/vidacruz.http`](docs/api/vidacruz.http)
+  (VS Code REST Client o IntelliJ), con todos los endpoints, los pacientes E1–E6 y las 3 consultas de ejemplo.
+- **Orden de lectura sugerido:**
+  1. [Arquitectura](#arquitectura) y [decisiones clave](#decisiones-clave);
+  2. [ADR-0007](docs/adr/0007-alertas-de-escalamiento.md) (RF-06, el requerimiento abierto);
+  3. [ADR-0005](docs/adr/0005-rag-vector-store-y-anti-alucinacion.md) (RAG y anti-alucinación);
+  4. [supuestos](#supuestos-ante-ambigüedades-del-enunciado).
+- **API keys del entorno desplegado:** se entregan por un canal privado; nunca se versionan. En local sirven las de
+  ejemplo de `.env.example`.
+
+## Arquitectura
+
+```mermaid
+flowchart LR
+    subgraph clientes[" "]
+        EST["Estación de triaje<br/>(enfermería)"]
+        MED["Médico"]
+        TAB["Tablero del<br/>equipo médico"]
+    end
+
+    subgraph triage["triage-service · :8081"]
+        TR["Registro · clasificación RN-01<br/>estados · monitor de SLA<br/>auditoría · reporte SQL"]
+    end
+    subgraph asistente["asistente-service · :8082"]
+        AS["RAG con citas (RN-05)<br/>vista de urgencias"]
+    end
+    subgraph alertas["alertas-service · :8083"]
+        AL["Alertas de escalamiento<br/>historial · atención"]
+    end
+
+    PG[("PostgreSQL<br/>pacientes · auditoría inmutable<br/>outbox")]
+    K{{"Kafka<br/>triaje.eventos<br/>3 particiones · key = pacienteId"}}
+    R[("Redis<br/>vista de urgencias · alertas<br/>Pub/Sub entre réplicas")]
+    V["Vector store en memoria<br/>embeddings ONNX locales"]
+    LLM["Google Gemini<br/>(LLM)"]
+    TEAMS["Microsoft Teams<br/>(opcional)"]
+
+    EST -- "REST · X-API-Key" --> TR
+    MED -- "REST" --> AS
+    TAB -- "SSE" --> AL
+
+    TR -- "R2DBC · 1 transacción:<br/>estado + auditoría + outbox" --> PG
+    TR -- "outbox relay<br/>(at-least-once, ordenado)" --> K
+    K -- "consumer group" --> AS
+    K -- "paciente_escalado" --> AL
+    AS -- "script Lua atómico" --> R
+    AL -- "Lua + Pub/Sub" --> R
+    AS --> V
+    AS -- "TimeLimiter + CircuitBreaker<br/>(503 si falla)" --> LLM
+    AL -- "webhook · retry + CB" --> TEAMS
+```
+
+| Servicio | Responsabilidad | Persistencia | Réplicas en AKS |
 |---|---|---|---|
-| `triage-service` | 8081 | Registro y clasificación de pacientes (RN-01), flujo de estados, SLA y escalamiento, auditoría clínica, reporte de operación | PostgreSQL (R2DBC) |
-| `asistente-service` | 8082 | Asistente clínico RAG sobre protocolos internos (anti-alucinación) y vista en tiempo real del estado de urgencias | Redis + vector store en memoria |
-| `alertas-service` | 8083 | Alertas de escalamiento al equipo médico (RF-06): SSE + webhook Microsoft Teams | Redis |
+| `triage-service` | Registro y clasificación (RF-01, RN-01), flujo de estados (RF-02), SLA y escalamiento idempotente (RF-03, RN-03), auditoría inmutable (RN-04), reporte de operación con SQL avanzado (RF-05) | PostgreSQL (R2DBC) | 2 |
+| `asistente-service` | Asistente RAG con citas y anti-alucinación (RF-04 A, RN-05); vista en tiempo real de urgencias reconstruida **solo** desde Kafka (RF-04 B) | Redis + vector store en memoria | 1 |
+| `alertas-service` | Alertas de escalamiento al equipo médico (RF-06): SSE + Microsoft Teams, historial y atención | Redis | 2 |
 
-Integración: topic Kafka `triaje.eventos` (`paciente_registrado`, `paciente_en_consulta`,
-`paciente_alta`, `paciente_escalado`).
+**Dentro de cada servicio: arquitectura hexagonal.** El `domain` es Java puro, sin Spring: reglas clínicas, máquina
+de estados, validador de citas. La capa `application` contiene los casos de uso y los puertos. En `infrastructure`
+están los adaptadores (web, R2DBC, Kafka, Redis, LLM). Las reglas de negocio se prueban sin infraestructura.
+
+**Eventos** (`triaje.eventos`, JSON versionado, key = `pacienteId`): `paciente_registrado`,
+`paciente_en_consulta`, `paciente_alta` y `paciente_escalado`. Contrato completo en
+[ADR-0002](docs/adr/0002-outbox-y-formato-de-eventos.md).
+
+## Decisiones clave
+
+| Decisión | Por qué | ADR |
+|---|---|---|
+| **3 microservicios** (las alertas en un servicio propio) | Una caída del LLM o de Teams nunca afecta al triaje; cada parte escala por separado; comunicación solo por Kafka | [0001](docs/adr/0001-descomposicion-en-microservicios.md) |
+| **Transactional outbox** | Estado, auditoría y evento nunca divergen. La API de triaje sigue respondiendo con Kafka caído (verificado: 201 en 23 ms) | [0002](docs/adr/0002-outbox-y-formato-de-eventos.md) |
+| **Escalamiento con `FOR UPDATE SKIP LOCKED`** | Idempotente por construcción y seguro con N réplicas sin coordinador (verificado en AKS con 2 réplicas) | [0003](docs/adr/0003-monitor-de-sla-y-escalamiento-idempotente.md) |
+| **Vista de urgencias con scripts Lua** | Reentregas, reprocesos y eventos tardíos nunca alteran los contadores; lectura O(1) | [0004](docs/adr/0004-vista-de-urgencias-en-redis.md) |
+| **Anti-alucinación en 3 capas**: umbral calibrado → contexto cerrado → validación de citas | Lo que no está en el corpus se responde **sin llamar al LLM**, y una cita inventada descarta la respuesta completa. Umbral **medido**, no supuesto | [0005](docs/adr/0005-rag-vector-store-y-anti-alucinacion.md) |
+| **Embeddings ONNX locales** | La recuperación (y el "no existe protocolo") no depende del proveedor; tests deterministas sin red | [0005](docs/adr/0005-rag-vector-store-y-anti-alucinacion.md) |
+| **Modo degradado**: TimeLimiter + CircuitBreaker y 503 explícito | Sin hilos colgados ni reintentos ocultos; con el circuito abierto responde en ~20 ms | [0006](docs/adr/0006-modo-degradado-del-asistente.md) |
+| **RF-06: SSE + Teams + atención** | Tiempo real para el equipo de turno, un canal fuera del sistema y trazabilidad de quién tomó cada alerta | [0007](docs/adr/0007-alertas-de-escalamiento.md) |
+| **API key + observabilidad + BlockHound** | Autenticación simple para clientes que son sistemas; una traza de punta a punta (HTTP → Kafka → consumidores); el carácter reactivo se **verifica** en cada build | [0008](docs/adr/0008-seguridad-y-observabilidad.md) |
+| **AKS con todo dentro del clúster** | Manifiestos Kubernetes portables y costo acotado; camino documentado a servicios gestionados | [0009](docs/adr/0009-despliegue-en-azure-aks.md) |
 
 ## Stack
 
-Java 21 · Spring Boot 3.5 · Spring WebFlux · R2DBC PostgreSQL · Reactor Kafka · Redis reactivo ·
-Spring AI (Google Gemini vía API compatible con OpenAI + embeddings ONNX locales) · Resilience4j ·
-Micrometer / Prometheus / OpenTelemetry · Testcontainers · Docker · Kubernetes (Azure)
+Java 21 · Spring Boot 3.5 · Spring WebFlux / Project Reactor · R2DBC PostgreSQL 16 + Flyway · Reactor Kafka
+(Kafka 3.9 KRaft) · Redis 7 reactivo · Spring AI 1.1 (Google Gemini + embeddings ONNX multilingües) · Resilience4j ·
+Spring Security · Micrometer / Prometheus / OpenTelemetry · JUnit 5 · Testcontainers · BlockHound · JaCoCo ·
+Docker · Kubernetes (AKS) · Azure Container Registry
 
 ## Ejecución local — un solo comando
 
@@ -141,7 +228,8 @@ rechaza `UPDATE`, `DELETE` y `TRUNCATE` sobre `auditoria_clinica`.
 | `GET` | `/asistente/estado-urgencias` | Pacientes activos (no `ALTA`) por nivel, en tiempo real (RF-04 B) | 200, 503 |
 
 ```bash
-curl -X POST localhost:8082/asistente/consulta -H 'Content-Type: application/json' \
+curl -X POST localhost:8082/asistente/consulta -H 'X-API-Key: cambia-esta-clave-asistente' \
+  -H 'Content-Type: application/json' \
   -d '{"pregunta":"¿Cuáles son las medidas iniciales ante una crisis hipertensiva?"}'
 ```
 ```json
@@ -180,7 +268,8 @@ endpoint responde 503; al recuperarse, la vista se pone al día sola (ver ADR-00
 | `POST` | `/alertas/{id}/atencion` | Un profesional toma la alerta `{"atendidaPor":"Dra. Salas"}` (idempotente) | 200, 400, 404 |
 
 ```bash
-curl -N localhost:8083/alertas/stream     # deja la conexión abierta y muestra las alertas al escalar
+# Deja la conexión abierta y muestra las alertas al escalar (EventSource no admite cabeceras: clave por parámetro)
+curl -N "localhost:8083/alertas/stream?api_key=cambia-esta-clave-alertas"
 ```
 
 **Decisión (ADR-0007):** el equipo médico de turno ve las alertas en tiempo real en un tablero conectado por
@@ -330,4 +419,24 @@ Ver [`docs/adr`](docs/adr).
 - [x] 10. Tests de integración con Testcontainers + cobertura (JaCoCo) y matriz de trazabilidad
 - [x] 11. Contenerización completa (`docker compose up --build`), Jaeger opcional
 - [x] 12. Kubernetes / Azure (AKS): URL pública, manifiestos y scripts de despliegue
-- [ ] 13. Documentación final
+- [x] 13. Documentación final: diagrama, decisiones clave, colección de peticiones y guía de entrega
+
+### Problemas reales encontrados y resueltos durante el desarrollo
+
+Encontrar y documentar las fallas fue parte del trabajo. Todas tienen corrección y, cuando aplica, un test de
+regresión:
+
+| Dónde se detectó | Problema | Corrección |
+|---|---|---|
+| BlockHound (tests) | Script Lua leído del disco en el event loop de Lettuce ante `NOSCRIPT` | Scripts cargados en memoria al arrancar ([ADR-0008](docs/adr/0008-seguridad-y-observabilidad.md)) |
+| BlockHound (tests) | Conexión de Lettuce abierta de forma síncrona en la primera petición reactiva | Inicialización anticipada |
+| Test de SSE | Los tableros no podían volver a suscribirse tras desconectarse el último | Contenedor Pub/Sub único de larga vida |
+| Prueba real | Un SLA configurado en segundos se informaba como `slaMinutos: 0` | Redondeo hacia arriba en el dominio |
+| Calibración del RAG | El umbral de similitud no separaba "qSOFA" (en el corpus) de "diabetes" (fuera) | Palabras clave solo para el índice y LLM como segunda barrera ([ADR-0005](docs/adr/0005-rag-vector-store-y-anti-alucinacion.md)) |
+| Docker | `TRIAGE_SLA_*` se vinculaba al mapa `triage.sla` y rompía el arranque | Variables `SLA_*` ([ADR-0003](docs/adr/0003-monitor-de-sla-y-escalamiento-idempotente.md)) |
+| Docker | Un 500 genérico con Redis caído | 503 con mensaje claro |
+| AKS | Kafka rechazaba la carpeta `lost+found` del disco administrado | Directorio de datos en un subdirectorio ([ADR-0009](docs/adr/0009-despliegue-en-azure-aks.md)) |
+| AKS | `runAsNonRoot` exige un UID numérico | `USER 10001` |
+| AKS | Los *service links* de Kubernetes pisaban `REDIS_PORT` | `enableServiceLinks: false` |
+| AKS | Asistente `OOMKilled` por la memoria nativa de ONNX Runtime | Heap al 50 % y límite de 3.5 GiB |
+| AKS | El stream SSE tardaba 15 s en abrir a través del ingress | Comentario `:conectado` inmediato |
