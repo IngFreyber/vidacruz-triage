@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.vidacruz.alertas.application.service.ProcesarEscalamientoService;
 import com.vidacruz.alertas.domain.EscalamientoPaciente;
 import com.vidacruz.alertas.infrastructure.config.AlertasProperties;
+import com.vidacruz.alertas.infrastructure.observabilidad.ObservacionKafka;
+import io.micrometer.observation.ObservationRegistry;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -40,14 +42,16 @@ public class ConsumidorEscalamientos implements SmartLifecycle {
     private final ProcesarEscalamientoService procesar;
     private final AlertasProperties props;
     private final ObjectMapper mapper;
+    private final ObservationRegistry observaciones;
 
     private volatile Disposable suscripcion;
 
     public ConsumidorEscalamientos(ProcesarEscalamientoService procesar, AlertasProperties props,
-                                   ObjectMapper mapper) {
+                                   ObjectMapper mapper, ObservationRegistry observaciones) {
         this.procesar = procesar;
         this.props = props;
         this.mapper = mapper;
+        this.observaciones = observaciones;
     }
 
     @Override
@@ -72,6 +76,10 @@ public class ConsumidorEscalamientos implements SmartLifecycle {
         if (tipo != null && !TIPO_ESCALADO.equals(new String(tipo.value(), StandardCharsets.UTF_8))) {
             return Mono.fromRunnable(() -> registro.receiverOffset().acknowledge());
         }
+        return ObservacionKafka.observar(observaciones, "alertas.kafka.consumo", registro, procesarEscalamiento(registro));
+    }
+
+    private Mono<Void> procesarEscalamiento(ReceiverRecord<String, String> registro) {
         return Mono.fromCallable(() -> parsear(registro.value()))
                 .flatMap(e -> e == null ? Mono.empty() : procesar.procesar(e))
                 .retryWhen(Retry.backoff(Long.MAX_VALUE, Duration.ofMillis(500))

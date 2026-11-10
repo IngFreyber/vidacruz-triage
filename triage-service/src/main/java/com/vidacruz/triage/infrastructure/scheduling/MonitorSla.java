@@ -3,6 +3,9 @@ package com.vidacruz.triage.infrastructure.scheduling;
 import com.vidacruz.triage.application.service.EscalarPacientesService;
 import com.vidacruz.triage.application.service.Tiempo;
 import com.vidacruz.triage.infrastructure.config.EscalamientoProperties;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
+import io.micrometer.observation.contextpropagation.ObservationThreadLocalAccessor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.SmartLifecycle;
@@ -29,13 +32,16 @@ public class MonitorSla implements SmartLifecycle {
     private final EscalarPacientesService escalar;
     private final EscalamientoProperties props;
     private final Clock clock;
+    private final ObservationRegistry observaciones;
 
     private volatile Disposable suscripcion;
 
-    public MonitorSla(EscalarPacientesService escalar, EscalamientoProperties props, Clock clock) {
+    public MonitorSla(EscalarPacientesService escalar, EscalamientoProperties props, Clock clock,
+                      ObservationRegistry observaciones) {
         this.escalar = escalar;
         this.props = props;
         this.clock = clock;
+        this.observaciones = observaciones;
     }
 
     @Override
@@ -51,13 +57,25 @@ public class MonitorSla implements SmartLifecycle {
         log.info("Monitor de SLA iniciado: intervalo={} lote={}", props.intervalo(), props.tamanoLote());
     }
 
+    /**
+     * Cada ciclo es una observación propia ({@code triage.sla.evaluacion}): los eventos {@code paciente_escalado}
+     * que genera llevan su {@code traceparent}, y el servicio de alertas continúa esa traza. Sin esto, los
+     * escalamientos (que no nacen de un request HTTP) viajarían sin contexto y no se podrían correlacionar.
+     */
     Mono<Integer> evaluar() {
+        Observation ciclo = Observation.createNotStarted("triage.sla.evaluacion", observaciones)
+                .contextualName("evaluar SLA")
+                .start();
         return Mono.defer(() -> escalar.escalarVencidos(Tiempo.ahora(clock)))
                 .doOnNext(n -> {
                     if (n > 0) {
+                        ciclo.highCardinalityKeyValue("escalados", String.valueOf(n));
                         log.info("Evaluación de SLA: {} pacientes escalados", n);
                     }
                 })
+                .doOnError(ciclo::error)
+                .doFinally(s -> ciclo.stop())
+                .contextWrite(ctx -> ctx.put(ObservationThreadLocalAccessor.KEY, ciclo))
                 .onErrorResume(e -> {
                     log.error("Falló la evaluación de SLA; se reintentará en el próximo ciclo", e);
                     return Mono.just(0);

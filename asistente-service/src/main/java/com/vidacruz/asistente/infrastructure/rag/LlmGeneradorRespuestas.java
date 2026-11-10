@@ -11,6 +11,8 @@ import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.reactor.circuitbreaker.operator.CircuitBreakerOperator;
 import io.github.resilience4j.reactor.timelimiter.TimeLimiterOperator;
 import io.github.resilience4j.timelimiter.TimeLimiter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -22,6 +24,7 @@ import org.springframework.ai.converter.BeanOutputConverter;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
@@ -61,12 +64,17 @@ public class LlmGeneradorRespuestas implements GeneradorRespuestas {
     private final ChatModel chatModel;
     private final CircuitBreaker circuitBreaker;
     private final TimeLimiter timeLimiter;
+    private final MeterRegistry metricas;
+    private final String modelo;
     private final BeanOutputConverter<SalidaLlm> conversor = new BeanOutputConverter<>(SalidaLlm.class);
 
-    public LlmGeneradorRespuestas(ChatModel chatModel, CircuitBreaker circuitBreaker, TimeLimiter timeLimiter) {
+    public LlmGeneradorRespuestas(ChatModel chatModel, CircuitBreaker circuitBreaker, TimeLimiter timeLimiter,
+                                  MeterRegistry metricas, String modelo) {
         this.chatModel = chatModel;
         this.circuitBreaker = circuitBreaker;
         this.timeLimiter = timeLimiter;
+        this.metricas = metricas;
+        this.modelo = modelo;
     }
 
     /**
@@ -90,12 +98,39 @@ public class LlmGeneradorRespuestas implements GeneradorRespuestas {
                 new SystemMessage(INSTRUCCIONES + "\n" + conversor.getFormat()),
                 new UserMessage(mensajeUsuario(pregunta, fragmentos))));
 
-        return Mono.fromCallable(() -> texto(chatModel.call(prompt)))
-                .subscribeOn(Schedulers.boundedElastic())
-                .transformDeferred(TimeLimiterOperator.of(timeLimiter))
-                .transformDeferred(CircuitBreakerOperator.of(circuitBreaker))
+        return Mono.defer(() -> {
+                    long inicio = System.nanoTime();
+                    return Mono.fromCallable(() -> texto(chatModel.call(prompt)))
+                            .subscribeOn(Schedulers.boundedElastic())
+                            .transformDeferred(TimeLimiterOperator.of(timeLimiter))
+                            .transformDeferred(CircuitBreakerOperator.of(circuitBreaker))
+                            .doOnSuccess(t -> medir(inicio, "ok"))
+                            .doOnError(e -> medir(inicio, resultado(e)));
+                })
                 .onErrorMap(e -> !(e instanceof LlmNoDisponibleException), LlmGeneradorRespuestas::noDisponible)
                 .map(this::convertir);
+    }
+
+    /**
+     * Métrica {@code asistente.llm.latencia} (timer con histograma): latencia de cada llamada al proveedor,
+     * etiquetada por resultado (ok, error, timeout, circuito_abierto) y modelo.
+     */
+    private void medir(long inicioNanos, String resultado) {
+        Timer.builder("asistente.llm.latencia")
+                .description("Latencia de las llamadas al proveedor de LLM")
+                .tag("resultado", resultado)
+                .tag("modelo", modelo)
+                .publishPercentileHistogram()
+                .register(metricas)
+                .record(Duration.ofNanos(System.nanoTime() - inicioNanos));
+    }
+
+    private static String resultado(Throwable e) {
+        return switch (e) {
+            case CallNotPermittedException ignored -> "circuito_abierto";
+            case TimeoutException ignored -> "timeout";
+            default -> "error";
+        };
     }
 
     static String mensajeUsuario(String pregunta, List<Fragmento> fragmentos) {

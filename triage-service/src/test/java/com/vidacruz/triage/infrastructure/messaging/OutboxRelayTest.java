@@ -100,7 +100,7 @@ class OutboxRelayTest {
     }
 
     private static EventoPendiente pendiente(long id) {
-        return new EventoPendiente(id, UUID.randomUUID(), UUID.randomUUID(), "paciente_registrado", "{}");
+        return new EventoPendiente(id, UUID.randomUUID(), UUID.randomUUID(), "paciente_registrado", "{}", null);
     }
 
     @SuppressWarnings("unchecked")

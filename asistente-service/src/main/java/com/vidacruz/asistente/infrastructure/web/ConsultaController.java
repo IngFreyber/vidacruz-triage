@@ -3,6 +3,7 @@ package com.vidacruz.asistente.infrastructure.web;
 import com.vidacruz.asistente.application.service.ConsultaClinicaService;
 import com.vidacruz.asistente.infrastructure.web.dto.ConsultaRequest;
 import com.vidacruz.asistente.infrastructure.web.dto.ConsultaResponse;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -17,13 +18,18 @@ import reactor.core.publisher.Mono;
 public class ConsultaController {
 
     private final ConsultaClinicaService consultas;
+    private final MeterRegistry metricas;
 
-    public ConsultaController(ConsultaClinicaService consultas) {
+    public ConsultaController(ConsultaClinicaService consultas, MeterRegistry metricas) {
         this.consultas = consultas;
+        this.metricas = metricas;
     }
 
     @PostMapping("/consulta")
     public Mono<ConsultaResponse> consultar(@RequestBody ConsultaRequest request) {
-        return consultas.consultar(request.pregunta()).map(ConsultaResponse::desde);
+        return consultas.consultar(request.pregunta())
+                // asistente.consultas{estado}: proporción de respuestas citadas, sin protocolo y descartadas (RN-05).
+                .doOnNext(r -> metricas.counter("asistente.consultas", "estado", r.estado().name()).increment())
+                .map(ConsultaResponse::desde);
     }
 }

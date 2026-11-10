@@ -238,7 +238,8 @@ class PacienteApiIntegrationTest extends IntegracionBase {
         @DisplayName("Peticiones concurrentes: solo una transición gana, las demás reciben 409")
         void concurrenciaOptimista() {
             String id = registrar(E1);
-            WebClient cliente = WebClient.create("http://localhost:" + puerto);
+            WebClient cliente = WebClient.builder().baseUrl("http://localhost:" + puerto)
+                    .defaultHeader(HEADER_API_KEY, API_KEY).build();
 
             List<Integer> estados = Flux.range(0, 6)
                     .flatMap(i -> cliente.patch().uri("/triage/pacientes/{id}/estado", id)

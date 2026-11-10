@@ -6,7 +6,6 @@ import com.vidacruz.asistente.domain.urgencias.EventoTriaje;
 import com.vidacruz.asistente.domain.urgencias.NivelTriage;
 import com.vidacruz.asistente.domain.urgencias.ResultadoAplicacion;
 import com.vidacruz.asistente.infrastructure.config.VistaUrgenciasProperties;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Repository;
@@ -34,7 +33,7 @@ public class RedisVistaUrgenciasRepository implements VistaUrgenciasRepository {
     static final String CLAVE_ACTUALIZADO = PREFIJO + "actualizado-en";
 
     private static final RedisScript<Long> SCRIPT =
-            RedisScript.of(new ClassPathResource("redis/aplicar_evento.lua"), Long.class);
+            ScriptsLua.cargar("redis/aplicar_evento.lua");
 
     private final ReactiveStringRedisTemplate redis;
     private final VistaUrgenciasProperties props;

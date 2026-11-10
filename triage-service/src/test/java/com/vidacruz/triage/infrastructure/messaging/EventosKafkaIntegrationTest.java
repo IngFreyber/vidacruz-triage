@@ -72,6 +72,22 @@ class EventosKafkaIntegrationTest extends IntegracionBase {
     }
 
     @Test
+    @DisplayName("Trazado distribuido: el evento lleva el traceparent W3C del request (mismo traceId que X-Trace-Id)")
+    void propagaLaTrazaDelRequestAKafka() {
+        var resultado = web.post().uri("/triage/pacientes").contentType(MediaType.APPLICATION_JSON).bodyValue(E1)
+                .exchange().expectStatus().isCreated()
+                .expectBody(Map.class).returnResult();
+        String traceId = resultado.getResponseHeaders().getFirst("X-Trace-Id");
+        String id = (String) resultado.getResponseBody().get("id");
+
+        ConsumerRecord<String, String> evento = consumirPorKey(id, 1, Duration.ofSeconds(20)).get(0);
+
+        assertThat(traceId).matches("[0-9a-f]{32}");
+        assertThat(header(evento, "traceparent")).matches("00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]")
+                .startsWith("00-" + traceId + "-");
+    }
+
+    @Test
     @DisplayName("Tras el ack de Kafka los eventos quedan marcados como publicados en el outbox")
     void marcaLosEventosComoPublicados() {
         String id = registrar();

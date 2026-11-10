@@ -23,7 +23,7 @@ class ConsumidorEventosTriajeTest {
             mock(EstadoUrgenciasService.class),
             new VistaUrgenciasProperties("triaje.eventos", "localhost:9092", "g", false,
                     Duration.ofDays(7), Duration.ofDays(7)),
-            new ObjectMapper().findAndRegisterModules());
+            new ObjectMapper().findAndRegisterModules(), io.micrometer.observation.ObservationRegistry.NOOP);
 
     @Test
     void leeUnEventoV1EIgnoraCamposAdicionales() {

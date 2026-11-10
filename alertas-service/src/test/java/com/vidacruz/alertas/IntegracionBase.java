@@ -4,8 +4,13 @@ import com.sun.net.httpserver.HttpServer;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.NewTopic;
+import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability;
 import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.test.web.reactive.server.WebTestClientBuilderCustomizer;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.GenericContainer;
@@ -26,7 +31,22 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureWebTestClient
+@AutoConfigureObservability
+@Import(IntegracionBase.ClienteAutenticado.class)
 public abstract class IntegracionBase {
+
+    /** API key de pruebas (no es un secreto: solo existe en el contexto de tests). */
+    protected static final String API_KEY = "clave-de-pruebas-alertas-0123456789";
+    protected static final String HEADER_API_KEY = "X-API-Key";
+
+    /** Todas las peticiones de WebTestClient llevan la API key; los tests de seguridad la omiten a propósito. */
+    @TestConfiguration(proxyBeanMethods = false)
+    static class ClienteAutenticado {
+        @Bean
+        WebTestClientBuilderCustomizer apiKeyPorDefecto() {
+            return builder -> builder.defaultHeader(HEADER_API_KEY, API_KEY);
+        }
+    }
 
     protected static final String TOPIC = "triaje.eventos";
 
@@ -41,6 +61,7 @@ public abstract class IntegracionBase {
     static final HttpServer TEAMS;
 
     static {
+        SoporteBlockHound.instalar();
         REDIS.start();
         KAFKA.start();
         try (Admin admin = Admin.create(Map.of(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG,
@@ -66,6 +87,7 @@ public abstract class IntegracionBase {
     static void propiedades(DynamicPropertyRegistry r) {
         r.add("spring.data.redis.host", REDIS::getHost);
         r.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
+        r.add("seguridad.api-keys", () -> API_KEY);
         r.add("alertas.bootstrap-servers", KAFKA::getBootstrapServers);
         r.add("alertas.offset-inicial", () -> "earliest");
         r.add("alertas.heartbeat", () -> "500ms");

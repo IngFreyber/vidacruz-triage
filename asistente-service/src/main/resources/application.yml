@@ -1,4 +1,7 @@
 spring:
+  reactor:
+    # Propaga traza y MDC a través de los operadores de Reactor (logs con traceId en código reactivo).
+    context-propagation: auto
   application:
     name: asistente-service
   data:
@@ -94,7 +97,16 @@ resilience4j:
         timeout-duration: ${LLM_TIMEOUT:25s}
         cancel-running-future: true
 
+# Autenticación por API key (ADR-0008). Sin valor por defecto: el servicio no arranca sin ASISTENTE_API_KEY.
+seguridad:
+  api-keys: ${ASISTENTE_API_KEY}
+  header: X-API-Key
+
 logging:
+  # Logs estructurados ECS (JSON) con traceId/spanId. LOG_FORMATO vacío = formato legible para desarrollo.
+  structured:
+    format:
+      console: ${LOG_FORMATO:ecs}
   level:
     org.apache.kafka: WARN
 
@@ -108,3 +120,20 @@ management:
       probes:
         enabled: true
       show-details: when-authorized
+      group:
+        # liveness: solo el estado interno (una dependencia caída no debe reiniciar el pod).
+        liveness:
+          include: livenessState
+        # readiness: el pod recibe tráfico solo si sus dependencias imprescindibles responden.
+        readiness:
+          include: readinessState
+  tracing:
+    sampling:
+      probability: ${TRACING_MUESTREO:1.0}
+  # El exportador OTLP se activa definiendo MANAGEMENT_OTLP_TRACING_ENDPOINT (p. ej. http://jaeger:4318/v1/traces).
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true

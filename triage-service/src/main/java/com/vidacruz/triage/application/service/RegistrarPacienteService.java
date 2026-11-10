@@ -1,5 +1,6 @@
 package com.vidacruz.triage.application.service;
 
+import com.vidacruz.triage.application.port.out.MetricasTriage;
 import com.vidacruz.triage.application.port.out.PacienteRepository;
 import com.vidacruz.triage.domain.model.Paciente;
 import com.vidacruz.triage.domain.model.SolicitudRegistro;
@@ -30,10 +31,11 @@ public class RegistrarPacienteService {
     private final ClasificadorTriage clasificador;
     private final PoliticaSla politicaSla;
     private final Clock clock;
+    private final MetricasTriage metricas;
 
     public RegistrarPacienteService(PacienteRepository pacientes, RegistroDeEventos eventos, TransactionalOperator tx,
                                     ValidadorRegistro validador, ClasificadorTriage clasificador,
-                                    PoliticaSla politicaSla, Clock clock) {
+                                    PoliticaSla politicaSla, Clock clock, MetricasTriage metricas) {
         this.pacientes = pacientes;
         this.eventos = eventos;
         this.tx = tx;
@@ -41,6 +43,7 @@ public class RegistrarPacienteService {
         this.clasificador = clasificador;
         this.politicaSla = politicaSla;
         this.clock = clock;
+        this.metricas = metricas;
     }
 
     public Mono<Paciente> registrar(SolicitudRegistro solicitud) {
@@ -51,7 +54,9 @@ public class RegistrarPacienteService {
                         .then(eventos.registrar(t))
                         .thenReturn(t.paciente()))
                 .as(tx::transactional)
-                .doOnNext(p -> log.info("Paciente registrado id={} nivel={} slaMin={}",
-                        p.id(), p.nivel(), p.slaMinutos()));
+                .doOnNext(p -> {
+                    metricas.pacienteClasificado(p.nivel());
+                    log.info("Paciente registrado id={} nivel={} slaMin={}", p.id(), p.nivel(), p.slaMinutos());
+                });
     }
 }

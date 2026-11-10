@@ -148,6 +148,10 @@ public class OutboxRelay implements SmartLifecycle {
         headers.add(new RecordHeader("eventVersion", bytes(String.valueOf(EventoTriajeMensaje.VERSION_ACTUAL))));
         headers.add(new RecordHeader("contentType", bytes("application/json")));
         headers.add(new RecordHeader("source", bytes("triage-service")));
+        if (e.traceparent() != null) {
+            // Propagación W3C: los consumidores continúan la traza del request original.
+            headers.add(new RecordHeader("traceparent", bytes(e.traceparent())));
+        }
         ProducerRecord<String, String> record = new ProducerRecord<>(props.topic(), null,
                 e.agregadoId().toString(), e.payload(), headers);
         return SenderRecord.create(record, e.id());

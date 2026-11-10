@@ -1,5 +1,6 @@
 package com.vidacruz.triage.infrastructure.config;
 
+import com.vidacruz.triage.application.port.out.MetricasTriage;
 import com.vidacruz.triage.application.port.out.PacienteRepository;
 import com.vidacruz.triage.application.port.out.ReporteOperacionRepository;
 import com.vidacruz.triage.application.reporte.ReporteOperacionService;
@@ -28,8 +29,9 @@ public class DominioConfig {
 
     @Bean
     EscalarPacientesService escalarPacientesService(PacienteRepository pacientes, RegistroDeEventos eventos,
-                                                    TransactionalOperator tx, EscalamientoProperties props) {
-        return new EscalarPacientesService(pacientes, eventos, tx, props.tamanoLote());
+                                                    TransactionalOperator tx, EscalamientoProperties props,
+                                                    MetricasTriage metricas) {
+        return new EscalarPacientesService(pacientes, eventos, tx, props.tamanoLote(), metricas);
     }
 
     @Bean

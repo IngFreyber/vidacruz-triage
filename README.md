@@ -36,6 +36,7 @@ Para ejecutar el servicio de triaje fuera de Docker (desarrollo). PostgreSQL se 
 **15432** del host para no chocar con instalaciones locales:
 
 ```bash
+set -a; . ./.env; set +a     # carga las API keys y la configuración local
 DB_PORT=15432 DB_PASSWORD=triage_local_pwd java -jar triage-service/target/triage-service.jar
 ```
 
@@ -145,6 +146,30 @@ de Workflows). Cada alerta queda en un historial con **quién la tomó y cuándo
 Redis Pub/Sub la difunde a todas las réplicas, y una caída de Teams (con retry y circuit breaker) no afecta al
 tablero ni al historial.
 
+## Seguridad y observabilidad (ADR-0008)
+
+**Autenticación:** todas las rutas exigen la cabecera `X-API-Key` (claves por servicio desde `TRIAGE_API_KEY`,
+`ASISTENTE_API_KEY` y `ALERTAS_API_KEY`; sin valor por defecto, así que un servicio sin clave no arranca). Son
+públicas solo las probes `/actuator/health/**`, `/actuator/info` y `/actuator/prometheus`. El stream SSE acepta
+además `?api_key=`, porque `EventSource` no admite cabeceras.
+
+```bash
+curl -H "X-API-Key: $TRIAGE_API_KEY" -H 'Content-Type: application/json' \
+     -X POST localhost:8081/triage/pacientes -d @paciente.json
+```
+
+**Observabilidad:**
+- Logs **JSON (ECS)** con `traceId`/`spanId`, también en código reactivo.
+- **Trazado distribuido OpenTelemetry**: el `traceparent` viaja por Kafka desde triage hasta asistente y alertas,
+  y cada respuesta trae `X-Trace-Id`.
+- **Métricas Prometheus**: `triage_clasificacion_total{nivel}`, `triage_escalamientos_total{nivel}`,
+  `asistente_llm_latencia_seconds{resultado,modelo}`, `asistente_consultas_total{estado}`,
+  `alertas_emitidas_total`, estado de los circuit breakers y latencia HTTP.
+- **Probes** de liveness y readiness por servicio.
+
+**Reactivo verificado:** BlockHound está activo en todos los tests de integración. Detectó y se corrigieron dos
+bloqueos reales en el uso de Redis (ver ADR-0008).
+
 ## Decisiones de arquitectura (ADR)
 
 Ver [`docs/adr`](docs/adr).
@@ -158,6 +183,7 @@ Ver [`docs/adr`](docs/adr).
 | [0005](docs/adr/0005-rag-vector-store-y-anti-alucinacion.md) | RAG: embeddings locales, vector store en memoria, umbral calibrado y anti-alucinación en tres capas |
 | [0006](docs/adr/0006-modo-degradado-del-asistente.md) | Modo degradado del asistente: TimeLimiter + CircuitBreaker, 503 explícito |
 | [0007](docs/adr/0007-alertas-de-escalamiento.md) | **RF-06**: alertas por SSE + Microsoft Teams, historial con atención, supuestos y alternativas |
+| [0008](docs/adr/0008-seguridad-y-observabilidad.md) | Seguridad por API key, logs ECS, métricas, trazado distribuido por Kafka y BlockHound |
 
 ## Supuestos ante ambigüedades del enunciado
 
@@ -187,7 +213,7 @@ Ver [`docs/adr`](docs/adr).
 - [x] 6. Asistente — vista de urgencias desde Kafka en Redis (RF-04 B)
 - [x] 7. Asistente — RAG con citas, anti-alucinación y modo degradado (RF-04 A, RN-05)
 - [x] 8. Servicio de alertas (RF-06)
-- [ ] 9. Seguridad y observabilidad
+- [x] 9. Seguridad y observabilidad
 - [ ] 10. Tests de integración con Testcontainers
 - [ ] 11. Contenerización completa (`docker compose up`)
 - [ ] 12. Kubernetes / Azure

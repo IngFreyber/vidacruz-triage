@@ -4,7 +4,6 @@ import com.vidacruz.alertas.application.port.out.AlertaRepository;
 import com.vidacruz.alertas.domain.Alerta;
 import com.vidacruz.alertas.domain.EstadoAlerta;
 import com.vidacruz.alertas.infrastructure.config.AlertasProperties;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.domain.Range;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -32,9 +31,9 @@ public class RedisAlertaRepository implements AlertaRepository {
     static final String PENDIENTES = PREFIJO + "pendientes";
 
     private static final RedisScript<Long> CREAR =
-            RedisScript.of(new ClassPathResource("redis/crear_alerta.lua"), Long.class);
+            ScriptsLua.cargar("redis/crear_alerta.lua");
     private static final RedisScript<Long> ATENDER =
-            RedisScript.of(new ClassPathResource("redis/atender_alerta.lua"), Long.class);
+            ScriptsLua.cargar("redis/atender_alerta.lua");
 
     private final ReactiveStringRedisTemplate redis;
     private final AlertasProperties props;

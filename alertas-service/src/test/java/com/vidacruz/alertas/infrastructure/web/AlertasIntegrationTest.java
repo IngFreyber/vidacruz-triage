@@ -184,7 +184,7 @@ class AlertasIntegrationTest extends IntegracionBase {
     void streamSse() throws Exception {
         List<ServerSentEvent<Map<String, Object>>> recibidos = new CopyOnWriteArrayList<>();
         Disposable conexion = WebClient.create("http://localhost:" + puerto).get()
-                .uri("/alertas/stream?pendientes=false")
+                .uri("/alertas/stream?pendientes=false&api_key=" + API_KEY)
                 .accept(MediaType.TEXT_EVENT_STREAM)
                 .retrieve()
                 .bodyToFlux(new ParameterizedTypeReference<ServerSentEvent<Map<String, Object>>>() {
@@ -209,6 +209,34 @@ class AlertasIntegrationTest extends IntegracionBase {
 
             assertThat(recibidos.stream().filter(e -> "alerta_atendida".equals(e.event())).findFirst().orElseThrow()
                     .data()).containsEntry("atendidaPor", "Dra. Salas");
+        } finally {
+            conexion.dispose();
+        }
+    }
+
+    @Test
+    @DisplayName("Regresión: tras desconectarse todos los tableros, uno nuevo sigue recibiendo alertas")
+    void sseSobreviveALaDesconexionDeTodosLosClientes() throws Exception {
+        WebClient cliente = WebClient.create("http://localhost:" + puerto);
+        // 1) Un tablero se conecta y se desconecta (el flujo compartido queda sin suscriptores).
+        cliente.get().uri("/alertas/stream?pendientes=false&api_key=" + API_KEY).retrieve()
+                .bodyToFlux(String.class).take(Duration.ofMillis(800)).blockLast();
+
+        // 2) Un tablero nuevo debe seguir recibiendo alertas en vivo.
+        List<ServerSentEvent<Map<String, Object>>> recibidos = new CopyOnWriteArrayList<>();
+        Disposable conexion = cliente.get().uri("/alertas/stream?pendientes=false&api_key=" + API_KEY)
+                .retrieve()
+                .bodyToFlux(new ParameterizedTypeReference<ServerSentEvent<Map<String, Object>>>() {
+                })
+                .subscribe(recibidos::add);
+        try {
+            Thread.sleep(1_500);
+            UUID evento = UUID.randomUUID();
+            publicar(evento, "paciente_escalado", UUID.randomUUID(), "Tras Reconexión");
+
+            boolean llego = esperar(() -> recibidos.stream()
+                    .anyMatch(e -> evento.toString().equals(e.id())), b -> b);
+            assertThat(llego).isTrue();
         } finally {
             conexion.dispose();
         }

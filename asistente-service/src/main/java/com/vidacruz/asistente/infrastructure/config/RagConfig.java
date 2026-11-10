@@ -9,6 +9,7 @@ import com.vidacruz.asistente.infrastructure.rag.LlmGeneradorRespuestas;
 import com.vidacruz.asistente.infrastructure.rag.VectorStoreBuscadorProtocolos;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.timelimiter.TimeLimiterRegistry;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ChatModel;
@@ -16,6 +17,7 @@ import org.springframework.ai.document.Document;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.vectorstore.SimpleVectorStore;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -50,9 +52,10 @@ public class RagConfig {
 
     @Bean
     GeneradorRespuestas generadorRespuestas(ChatModel chatModel, CircuitBreakerRegistry circuitBreakers,
-                                            TimeLimiterRegistry timeLimiters) {
+                                            TimeLimiterRegistry timeLimiters, MeterRegistry metricas,
+                                            @Value("${spring.ai.openai.chat.options.model:desconocido}") String modelo) {
         return new LlmGeneradorRespuestas(chatModel, circuitBreakers.circuitBreaker(INSTANCIA_LLM),
-                timeLimiters.timeLimiter(INSTANCIA_LLM));
+                timeLimiters.timeLimiter(INSTANCIA_LLM), metricas, modelo);
     }
 
     @Bean

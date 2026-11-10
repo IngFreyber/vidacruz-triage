@@ -7,6 +7,8 @@ import com.vidacruz.alertas.domain.Alerta;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
+import org.springframework.data.redis.listener.ChannelTopic;
+import org.springframework.data.redis.listener.ReactiveRedisMessageListenerContainer;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -35,10 +37,17 @@ public class RedisDifusorAlertas implements DifusorAlertas {
     private final ObjectMapper mapper;
     private final Flux<Alerta> flujo;
 
-    public RedisDifusorAlertas(ReactiveStringRedisTemplate redis, ObjectMapper mapper) {
+    /**
+     * @param contenedor contenedor de escucha único y de larga vida (ver {@code ContenedorPubSubConfig}). No se usa
+     *                   {@code ReactiveRedisTemplate.listenToChannel}: crea un contenedor por suscripción y al
+     *                   cancelarse (último tablero desconectado) cierra la conexión, dejando a los siguientes
+     *                   suscriptores sin poder reconectar.
+     */
+    public RedisDifusorAlertas(ReactiveStringRedisTemplate redis, ReactiveRedisMessageListenerContainer contenedor,
+                               ObjectMapper mapper) {
         this.redis = redis;
         this.mapper = mapper;
-        this.flujo = redis.listenToChannel(CANAL)
+        this.flujo = contenedor.receive(ChannelTopic.of(CANAL))
                 .flatMap(mensaje -> deserializar(mensaje.getMessage()))
                 .retryWhen(Retry.backoff(Long.MAX_VALUE, Duration.ofSeconds(1)).maxBackoff(Duration.ofSeconds(15))
                         .doBeforeRetry(s -> log.warn("Suscripción a {} perdida; reconectando: {}", CANAL,

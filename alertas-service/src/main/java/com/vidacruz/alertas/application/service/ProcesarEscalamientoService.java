@@ -2,6 +2,7 @@ package com.vidacruz.alertas.application.service;
 
 import com.vidacruz.alertas.application.port.out.AlertaRepository;
 import com.vidacruz.alertas.application.port.out.DifusorAlertas;
+import com.vidacruz.alertas.application.port.out.MetricasAlertas;
 import com.vidacruz.alertas.application.port.out.NotificadorExterno;
 import com.vidacruz.alertas.domain.Alerta;
 import com.vidacruz.alertas.domain.EscalamientoPaciente;
@@ -31,12 +32,14 @@ public class ProcesarEscalamientoService {
     private final AlertaRepository alertas;
     private final DifusorAlertas difusor;
     private final List<NotificadorExterno> notificadores;
+    private final MetricasAlertas metricas;
 
     public ProcesarEscalamientoService(AlertaRepository alertas, DifusorAlertas difusor,
-                                       List<NotificadorExterno> notificadores) {
+                                       List<NotificadorExterno> notificadores, MetricasAlertas metricas) {
         this.alertas = alertas;
         this.difusor = difusor;
         this.notificadores = notificadores;
+        this.metricas = metricas;
     }
 
     /**
@@ -50,6 +53,7 @@ public class ProcesarEscalamientoService {
                         log.info("Escalamiento {} ya alertado (reentrega); se omite", escalamiento.eventId());
                         return Mono.just(false);
                     }
+                    metricas.alertaEmitida(alerta.nivel());
                     log.warn("ALERTA emitida id={} paciente={} nivel={} espera={}min", alerta.id(),
                             alerta.pacienteId(), alerta.nivel(), alerta.minutosEspera());
                     return difusor.difundir(alerta)
@@ -65,8 +69,12 @@ public class ProcesarEscalamientoService {
     private Mono<Void> notificarExternos(Alerta alerta) {
         return Flux.fromIterable(notificadores)
                 .flatMap(n -> n.notificar(alerta)
-                        .doOnSuccess(v -> log.info("Alerta {} enviada por {}", alerta.id(), n.nombre()))
+                        .doOnSuccess(v -> {
+                            metricas.notificacion("teams", true);
+                            log.info("Alerta {} enviada por {}", alerta.id(), n.nombre());
+                        })
                         .onErrorResume(e -> {
+                            metricas.notificacion("teams", false);
                             log.error("Canal {} no pudo entregar la alerta {} (queda en historial y SSE): {}",
                                     n.nombre(), alerta.id(), e.toString());
                             return Mono.empty();

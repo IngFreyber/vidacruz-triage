@@ -7,6 +7,9 @@ import com.vidacruz.triage.domain.model.EventoPaciente;
 import com.vidacruz.triage.domain.model.Paciente;
 import com.vidacruz.triage.infrastructure.messaging.EventoTriajeMensaje;
 import io.r2dbc.postgresql.codec.Json;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.Tracer;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Repository;
 import reactor.core.publisher.Flux;
@@ -23,8 +26,8 @@ import java.util.UUID;
 public class R2dbcOutboxRepository implements OutboxRepository {
 
     private static final String INSERT = """
-            INSERT INTO outbox_eventos (evento_id, agregado_id, tipo_evento, payload, creado_en)
-            VALUES (:eventoId, :agregadoId, :tipo, :payload, :creadoEn)
+            INSERT INTO outbox_eventos (evento_id, agregado_id, tipo_evento, payload, creado_en, traceparent)
+            VALUES (:eventoId, :agregadoId, :tipo, :payload, :creadoEn, :traceparent)
             """;
 
     /**
@@ -32,7 +35,7 @@ public class R2dbcOutboxRepository implements OutboxRepository {
      * réplicas publiquen en paralelo sin tomar los mismos eventos ni bloquearse entre sí.
      */
     private static final String SELECT_PENDIENTES = """
-            SELECT id, evento_id, agregado_id, tipo_evento, payload::text AS payload
+            SELECT id, evento_id, agregado_id, tipo_evento, payload::text AS payload, traceparent
               FROM outbox_eventos
              WHERE publicado_en IS NULL
              ORDER BY id
@@ -50,16 +53,19 @@ public class R2dbcOutboxRepository implements OutboxRepository {
 
     private final DatabaseClient db;
     private final ObjectMapper mapper;
+    private final ObjectProvider<Tracer> tracer;
 
-    public R2dbcOutboxRepository(DatabaseClient db, ObjectMapper mapper) {
+    public R2dbcOutboxRepository(DatabaseClient db, ObjectMapper mapper, ObjectProvider<Tracer> tracer) {
         this.db = db;
         this.mapper = mapper;
+        this.tracer = tracer;
     }
 
     /**
      * Evento pendiente de publicar.
      */
-    public record EventoPendiente(long id, UUID eventoId, UUID agregadoId, String tipoEvento, String payload) {
+    public record EventoPendiente(long id, UUID eventoId, UUID agregadoId, String tipoEvento, String payload,
+                                  String traceparent) {
     }
 
     /** Debe invocarse dentro de una transacción para que el bloqueo se mantenga hasta marcar publicados. */
@@ -71,7 +77,8 @@ public class R2dbcOutboxRepository implements OutboxRepository {
                         r.get("evento_id", UUID.class),
                         r.get("agregado_id", UUID.class),
                         r.get("tipo_evento", String.class),
-                        r.get("payload", String.class)))
+                        r.get("payload", String.class),
+                        r.get("traceparent", String.class)))
                 .all();
     }
 
@@ -97,13 +104,31 @@ public class R2dbcOutboxRepository implements OutboxRepository {
     @Override
     public Mono<Void> guardar(EventoPaciente evento, Paciente paciente) {
         return Mono.fromCallable(() -> serializar(evento, paciente))
-                .flatMap(json -> db.sql(INSERT)
-                        .bind("eventoId", evento.eventoId())
-                        .bind("agregadoId", evento.pacienteId())
-                        .bind("tipo", evento.tipo().codigo())
-                        .bind("payload", Json.of(json))
-                        .bind("creadoEn", evento.ocurridoEn())
-                        .then());
+                .flatMap(json -> {
+                    DatabaseClient.GenericExecuteSpec spec = db.sql(INSERT)
+                            .bind("eventoId", evento.eventoId())
+                            .bind("agregadoId", evento.pacienteId())
+                            .bind("tipo", evento.tipo().codigo())
+                            .bind("payload", Json.of(json))
+                            .bind("creadoEn", evento.ocurridoEn());
+                    String traceparent = traceparentActual();
+                    return (traceparent == null ? spec.bindNull("traceparent", String.class)
+                            : spec.bind("traceparent", traceparent)).then();
+                });
+    }
+
+    /**
+     * Contexto W3C ({@code 00-traceId-spanId-01}) del span en curso: el request HTTP que originó el cambio. Con
+     * {@code spring.reactor.context-propagation=auto} el span es visible dentro de los operadores de Reactor.
+     */
+    private String traceparentActual() {
+        Tracer t = tracer.getIfAvailable();
+        Span span = t == null ? null : t.currentSpan();
+        if (span == null) {
+            return null;
+        }
+        return "00-%s-%s-%s".formatted(span.context().traceId(), span.context().spanId(),
+                Boolean.TRUE.equals(span.context().sampled()) ? "01" : "00");
     }
 
     private String serializar(EventoPaciente e, Paciente p) throws JsonProcessingException {

@@ -5,6 +5,8 @@ import com.vidacruz.asistente.application.service.EstadoUrgenciasService;
 import com.vidacruz.asistente.domain.urgencias.EventoTriaje;
 import com.vidacruz.asistente.domain.urgencias.NivelTriage;
 import com.vidacruz.asistente.infrastructure.config.VistaUrgenciasProperties;
+import com.vidacruz.asistente.infrastructure.observabilidad.ObservacionKafka;
+import io.micrometer.observation.ObservationRegistry;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.slf4j.Logger;
@@ -47,14 +49,16 @@ public class ConsumidorEventosTriaje implements SmartLifecycle {
     private final EstadoUrgenciasService urgencias;
     private final VistaUrgenciasProperties props;
     private final ObjectMapper mapper;
+    private final ObservationRegistry observaciones;
 
     private volatile Disposable suscripcion;
 
     public ConsumidorEventosTriaje(EstadoUrgenciasService urgencias, VistaUrgenciasProperties props,
-                                   ObjectMapper mapper) {
+                                   ObjectMapper mapper, ObservationRegistry observaciones) {
         this.urgencias = urgencias;
         this.props = props;
         this.mapper = mapper;
+        this.observaciones = observaciones;
     }
 
     @Override
@@ -75,6 +79,10 @@ public class ConsumidorEventosTriaje implements SmartLifecycle {
     }
 
     Mono<Void> procesar(ReceiverRecord<String, String> registro) {
+        return ObservacionKafka.observar(observaciones, "asistente.kafka.consumo", registro, aplicar(registro));
+    }
+
+    private Mono<Void> aplicar(ReceiverRecord<String, String> registro) {
         return Mono.fromCallable(() -> parsear(registro.value()))
                 .flatMap(urgencias::aplicar)
                 .retryWhen(Retry.backoff(Long.MAX_VALUE, Duration.ofMillis(500))

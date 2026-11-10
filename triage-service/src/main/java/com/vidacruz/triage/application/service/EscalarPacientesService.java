@@ -1,5 +1,6 @@
 package com.vidacruz.triage.application.service;
 
+import com.vidacruz.triage.application.port.out.MetricasTriage;
 import com.vidacruz.triage.application.port.out.PacienteRepository;
 import com.vidacruz.triage.domain.model.Transicion;
 import org.slf4j.Logger;
@@ -8,6 +9,7 @@ import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 import java.time.Instant;
+import java.util.List;
 
 /**
  * RF-03 / RN-03: escala a los pacientes que superaron su SLA sin entrar a consulta.
@@ -30,13 +32,15 @@ public class EscalarPacientesService {
     private final RegistroDeEventos eventos;
     private final TransactionalOperator tx;
     private final int tamanoLote;
+    private final MetricasTriage metricas;
 
     public EscalarPacientesService(PacienteRepository pacientes, RegistroDeEventos eventos, TransactionalOperator tx,
-                                   int tamanoLote) {
+                                   int tamanoLote, MetricasTriage metricas) {
         this.pacientes = pacientes;
         this.eventos = eventos;
         this.tx = tx;
         this.tamanoLote = tamanoLote;
+        this.metricas = metricas;
     }
 
     /**
@@ -56,13 +60,15 @@ public class EscalarPacientesService {
                 .concatMap(t -> pacientes.actualizar(t.paciente())
                         .then(eventos.registrar(t))
                         .thenReturn(t))
-                .doOnNext(this::registrarLog)
-                .count()
-                .map(Long::intValue)
-                .as(tx::transactional);
+                .collectList()
+                .as(tx::transactional)
+                // Métricas y logs solo después del commit: un lote revertido no cuenta como escalado.
+                .doOnNext(escalados -> escalados.forEach(this::registrar))
+                .map(List::size);
     }
 
-    private void registrarLog(Transicion t) {
+    private void registrar(Transicion t) {
+        metricas.pacienteEscalado(t.paciente().nivel());
         log.warn("Paciente ESCALADO id={} nivel={} slaMin={} registro={}",
                 t.paciente().id(), t.paciente().nivel(), t.paciente().slaMinutos(), t.paciente().fechaRegistro());
     }
