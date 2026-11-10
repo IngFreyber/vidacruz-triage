@@ -1,0 +1,110 @@
+# Kafka 3.9 en modo KRaft (sin ZooKeeper), un solo broker dentro del clúster (decisión de costo para la prueba;
+# en producción: Azure Event Hubs con API Kafka o un clúster de 3 brokers, ver ADR-0009).
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: vidacruz
+  labels: { app: kafka }
+spec:
+  clusterIP: None
+  selector: { app: kafka }
+  ports:
+    - name: broker
+      port: 9092
+    - name: controller
+      port: 9093
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: vidacruz
+  labels: { app: kafka, app.kubernetes.io/part-of: vidacruz }
+spec:
+  serviceName: kafka
+  replicas: 1
+  selector:
+    matchLabels: { app: kafka }
+  template:
+    metadata:
+      labels: { app: kafka }
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: kafka
+          image: apache/kafka:3.9.1
+          ports:
+            - containerPort: 9092
+            - containerPort: 9093
+          env:
+            - { name: KAFKA_NODE_ID, value: "1" }
+            - { name: KAFKA_PROCESS_ROLES, value: "broker,controller" }
+            - { name: KAFKA_LISTENERS, value: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093" }
+            - { name: KAFKA_ADVERTISED_LISTENERS, value: "PLAINTEXT://kafka:9092" }
+            - { name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP, value: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT" }
+            - { name: KAFKA_CONTROLLER_LISTENER_NAMES, value: "CONTROLLER" }
+            - { name: KAFKA_CONTROLLER_QUORUM_VOTERS, value: "1@localhost:9093" }
+            - { name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR, value: "1" }
+            - { name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR, value: "1" }
+            - { name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR, value: "1" }
+            - { name: KAFKA_AUTO_CREATE_TOPICS_ENABLE, value: "false" }
+            # Retención de 7 días: suficiente para reconstruir la vista de urgencias desde el inicio (ADR-0004).
+            - { name: KAFKA_LOG_RETENTION_HOURS, value: "168" }
+            # Subdirectorio: los discos administrados de Azure (ext4) traen 'lost+found' en la raíz del volumen y Kafka
+            # rechaza cualquier carpeta que no sea una partición (error encontrado en el primer despliegue en AKS).
+            - { name: KAFKA_LOG_DIRS, value: "/var/lib/kafka/data/kafka-logs" }
+            - { name: KAFKA_HEAP_OPTS, value: "-Xms512m -Xmx768m" }
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 9092
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 200m, memory: 768Mi }
+            limits: { memory: 1280Mi }
+          volumeMounts:
+            - name: datos
+              mountPath: /var/lib/kafka/data
+  volumeClaimTemplates:
+    - metadata:
+        name: datos
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: managed-csi
+        resources:
+          requests:
+            storage: 5Gi
+---
+# Crea el topic triaje.eventos (3 particiones) de forma idempotente cuando el broker está listo.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-crear-topic
+  namespace: vidacruz
+spec:
+  backoffLimit: 20
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: crear-topic
+          image: apache/kafka:3.9.1
+          command:
+            - sh
+            - -c
+            - >-
+              /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists
+              --topic triaje.eventos --partitions 3 --replication-factor 1
+              && /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --describe --topic triaje.eventos
+          resources:
+            requests: { cpu: 50m, memory: 256Mi }
+            limits: { memory: 512Mi }

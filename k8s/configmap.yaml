@@ -1,0 +1,25 @@
+# Configuración no sensible. Los secretos (contraseña de PostgreSQL, API keys, LLM, webhook de Teams) van en el
+# Secret "vidacruz-secretos", que crea el script de despliegue y NUNCA se versiona.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vidacruz-config
+  namespace: vidacruz
+data:
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_NAME: triage
+  DB_USER: triage
+  REDIS_HOST: redis
+  LOG_FORMATO: ecs
+  TRACING_MUESTREO: "1.0"
+  LLM_BASE_URL: https://generativelanguage.googleapis.com/v1beta/openai
+  LLM_MODEL: gemini-3.5-flash
+  # SLA reales del enunciado (RN-02); para una demostración pueden acortarse (p. ej. SLA_CRITICO=1m).
+  SLA_CRITICO: 5m
+  SLA_URGENTE: 10m
+  SLA_URGENTE_2: 30m
+  SLA_NO_URGENTE: 60m
+  SLA_NO_URGENTE_2: 120m
+  TRIAGE_ESCALAMIENTO_INTERVALO: 30s

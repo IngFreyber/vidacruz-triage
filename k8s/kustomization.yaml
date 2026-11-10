@@ -1,0 +1,15 @@
+# Despliegue completo:  kubectl apply -k k8s/
+# (el Secret "vidacruz-secretos" lo crea infra/azure/desplegar.sh; las imágenes se reescriben al registro ACR)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: vidacruz
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - infra/postgres.yaml
+  - infra/kafka.yaml
+  - infra/redis.yaml
+  - servicios/triage.yaml
+  - servicios/asistente.yaml
+  - servicios/alertas.yaml
+  - ingress.yaml

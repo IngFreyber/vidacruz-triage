@@ -15,13 +15,14 @@ RUN java -Djarmode=tools -jar alertas-service/target/alertas-service.jar extract
 
 # --- 2) Ejecución: JRE mínima, usuario sin privilegios ----------------------------------------------------
 FROM eclipse-temurin:21-jre-alpine
-RUN addgroup -S vidacruz && adduser -S vidacruz -G vidacruz
+# UID/GID numéricos fijos: Kubernetes (runAsNonRoot) solo puede verificar un usuario no root si es numérico.
+RUN addgroup -S -g 10001 vidacruz && adduser -S -u 10001 -G vidacruz vidacruz
 WORKDIR /app
 COPY --from=build --chown=vidacruz:vidacruz /capas/dependencies/ ./
 COPY --from=build --chown=vidacruz:vidacruz /capas/spring-boot-loader/ ./
 COPY --from=build --chown=vidacruz:vidacruz /capas/snapshot-dependencies/ ./
 COPY --from=build --chown=vidacruz:vidacruz /capas/application/ ./
-USER vidacruz
+USER 10001:10001
 EXPOSE 8083
 ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError"
 HEALTHCHECK --interval=10s --timeout=3s --start-period=40s --retries=5 \

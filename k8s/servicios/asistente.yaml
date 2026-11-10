@@ -1,0 +1,91 @@
+# asistente-service: 1 réplica (indexa el corpus con el modelo ONNX al arrancar y es el pod de más memoria).
+# Escala horizontalmente sin cambios: la vista vive en Redis y el consumer group reparte particiones.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: asistente
+  namespace: vidacruz
+  labels: { app: asistente, app.kubernetes.io/part-of: vidacruz }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: asistente }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  template:
+    metadata:
+      labels: { app: asistente }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8082"
+        prometheus.io/path: /actuator/prometheus
+    spec:
+      # Sin "service links": Kubernetes inyectaría REDIS_PORT=tcp://10.0.x.x:6379 (por el Service 'redis'), que choca
+      # con la variable REDIS_PORT que espera la aplicación. Los servicios se descubren por DNS.
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      initContainers:
+        - name: esperar-dependencias
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z redis 6379 && nc -z kafka 9092; do echo esperando redis/kafka; sleep 3; done"]
+          securityContext: { runAsUser: 65534, allowPrivilegeEscalation: false }
+      containers:
+        - name: asistente
+          image: vidacruz/asistente-service:local
+          ports:
+            - name: http
+              containerPort: 8082
+          envFrom:
+            - configMapRef: { name: vidacruz-config }
+          env:
+            - name: ASISTENTE_API_KEY
+              valueFrom: { secretKeyRef: { name: vidacruz-secretos, key: ASISTENTE_API_KEY } }
+            - name: LLM_API_KEY
+              valueFrom: { secretKeyRef: { name: vidacruz-secretos, key: LLM_API_KEY } }
+            # Heap al 50 %: ONNX Runtime mantiene el modelo (~460 MB) y sus buffers en memoria NATIVA, fuera del heap.
+            # Con el 75 % por defecto el pod superaba su límite y era terminado (OOMKilled) en AKS.
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=50 -XX:+ExitOnOutOfMemoryError"
+          startupProbe:
+            httpGet: { path: /actuator/health/liveness, port: http }
+            periodSeconds: 5
+            failureThreshold: 60   # hasta 5 min: carga de ONNX Runtime e indexación del corpus
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: http }
+            periodSeconds: 15
+            failureThreshold: 4
+          lifecycle:
+            preStop:
+              exec: { command: ["sh", "-c", "sleep 5"] }
+          resources:
+            requests: { cpu: 250m, memory: 2Gi }
+            limits: { memory: 3584Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: asistente
+  namespace: vidacruz
+  labels: { app: asistente }
+spec:
+  selector: { app: asistente }
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

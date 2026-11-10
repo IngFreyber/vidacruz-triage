@@ -62,8 +62,8 @@ TRACING_EXPORTAR=true docker compose --profile observabilidad up -d
 
 | Imagen | Base | Tamaño | Notas |
 |---|---|---|---|
-| `vidacruz/triage-service` | `eclipse-temurin:21-jre-alpine` | 412 MB | |
-| `vidacruz/alertas-service` | `eclipse-temurin:21-jre-alpine` | 419 MB | |
+| `vidacruz/triage-service` | `eclipse-temurin:21-jre-alpine` | 412 MB | UID 10001 |
+| `vidacruz/alertas-service` | `eclipse-temurin:21-jre-alpine` | 419 MB | UID 10001 |
 | `vidacruz/asistente-service` | `eclipse-temurin:21-jre-noble` | 1.7 GB | Incluye el modelo ONNX (~460 MB) y ONNX Runtime, que necesita glibc; por eso no usa Alpine |
 
 Dockerfiles multi-stage: compilación con Maven (caché de dependencias con BuildKit), capas de Spring Boot
@@ -73,7 +73,7 @@ descarga nada al arrancar.
 
 ### Desarrollo sin Docker
 
-`./mvnw verify` compila y ejecuta los 217 tests (Testcontainers) con cobertura. Para ejecutar un servicio
+`./mvnw verify` compila y ejecuta los 218 tests (Testcontainers) con cobertura. Para ejecutar un servicio
 fuera de Docker, con la infraestructura de compose (PostgreSQL publicado en **15432** para no chocar con
 instalaciones locales):
 
@@ -189,10 +189,43 @@ de Workflows). Cada alerta queda en un historial con **quién la tomó y cuándo
 Redis Pub/Sub la difunde a todas las réplicas, y una caída de Teams (con retry y circuit breaker) no afecta al
 tablero ni al historial.
 
+## Despliegue en Azure (AKS)
+
+**URL pública: http://57.162.225.46** (las API keys del entorno desplegado se entregan por un canal privado; no
+están en el repositorio).
+
+| Servicio | Endpoints públicos |
+|---|---|
+| triage | `http://57.162.225.46/triage/pacientes`, `/triage/pacientes/{id}`, `/triage/pacientes/{id}/estado`, `/triage/pacientes/{id}/auditoria`, `/triage/reportes/operacion` |
+| asistente | `http://57.162.225.46/asistente/consulta`, `/asistente/estado-urgencias` |
+| alertas | `http://57.162.225.46/alertas`, `/alertas/{id}`, `/alertas/{id}/atencion`, `/alertas/stream?api_key=…` |
+
+```bash
+curl -X POST http://57.162.225.46/triage/pacientes -H "X-API-Key: <TRIAGE_API_KEY>" \
+     -H 'Content-Type: application/json' -d '{"nombreCompleto":"Ana Pérez","edad":58,"frecuenciaCardiaca":130,
+     "presionSistolica":180,"presionDiastolica":110,"spo2":97,"temperatura":36.8,"dolor":8,"gcs":15,
+     "quejaPrincipal":"Dolor torácico"}'
+```
+
+**Arquitectura en Azure:** AKS (1 nodo `Standard_D4as_v4`, East US) con los 3 servicios (triage ×2, alertas ×2,
+asistente ×1) más PostgreSQL, Kafka y Redis en StatefulSets con discos administrados. Las imágenes se publican en
+Azure Container Registry, y un único ingress NGINX administrado expone solo las rutas de negocio. Decisiones,
+alternativas para producción y los 5 problemas reales encontrados al desplegar: [ADR-0009](docs/adr/0009-despliegue-en-azure-aks.md).
+
+**Manifiestos:** [`k8s/`](k8s) (Kustomize: Deployments, Services, StatefulSets, Job, Ingress, ConfigMap).
+**Scripts:** [`infra/azure/`](infra/azure).
+
+```bash
+az login
+bash infra/azure/desplegar.sh      # crea ACR + AKS, publica imágenes, genera API keys, despliega y prueba
+bash infra/azure/apagar.sh         # detiene el nodo (ahorra crédito) · encender.sh lo reanuda
+bash infra/azure/eliminar.sh       # borra todo (pide confirmación)
+```
+
 ## Tests
 
 ```bash
-./mvnw verify      # 217 tests (unitarios + integración) y reporte de cobertura por servicio
+./mvnw verify      # 218 tests (unitarios + integración) y reporte de cobertura por servicio
 ```
 
 Los tests de integración usan **Testcontainers** con los mismos motores de producción (PostgreSQL 16, Kafka 3.9,
@@ -204,7 +237,7 @@ algo bloquea el event loop, el test falla.
 |---|---|---|---|---|
 | `triage-service` | 152 | **96 %** | 77 % | `triage-service/target/site/jacoco/index.html` |
 | `asistente-service` | 45 | **93 %** | 67 % | `asistente-service/target/site/jacoco/index.html` |
-| `alertas-service` | 20 | **90 %** | 67 % | `alertas-service/target/site/jacoco/index.html` |
+| `alertas-service` | 21 | **90 %** | 67 % | `alertas-service/target/site/jacoco/index.html` |
 
 ### Matriz de trazabilidad: requerimiento → tests
 
@@ -263,6 +296,7 @@ Ver [`docs/adr`](docs/adr).
 | [0006](docs/adr/0006-modo-degradado-del-asistente.md) | Modo degradado del asistente: TimeLimiter + CircuitBreaker, 503 explícito |
 | [0007](docs/adr/0007-alertas-de-escalamiento.md) | **RF-06**: alertas por SSE + Microsoft Teams, historial con atención, supuestos y alternativas |
 | [0008](docs/adr/0008-seguridad-y-observabilidad.md) | Seguridad por API key, logs ECS, métricas, trazado distribuido por Kafka y BlockHound |
+| [0009](docs/adr/0009-despliegue-en-azure-aks.md) | Despliegue en Azure AKS: arquitectura, seguridad de pods y problemas reales resueltos |
 
 ## Supuestos ante ambigüedades del enunciado
 
@@ -295,5 +329,5 @@ Ver [`docs/adr`](docs/adr).
 - [x] 9. Seguridad y observabilidad
 - [x] 10. Tests de integración con Testcontainers + cobertura (JaCoCo) y matriz de trazabilidad
 - [x] 11. Contenerización completa (`docker compose up --build`), Jaeger opcional
-- [ ] 12. Kubernetes / Azure
+- [x] 12. Kubernetes / Azure (AKS): URL pública, manifiestos y scripts de despliegue
 - [ ] 13. Documentación final

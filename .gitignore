@@ -23,3 +23,7 @@ target/
 # OS
 .DS_Store
 Thumbs.db
+
+# Despliegue en Azure: nombres generados y API keys del entorno público
+infra/azure/.estado
+infra/azure/.claves

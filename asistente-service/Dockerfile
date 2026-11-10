@@ -26,14 +26,15 @@ RUN java -Djarmode=tools -jar asistente-service/target/asistente-service.jar ext
 # --- 3) Ejecución --------------------------------------------------------------------------------------------
 # Ubuntu (glibc) y no Alpine (musl): las bibliotecas nativas de ONNX Runtime requieren glibc.
 FROM eclipse-temurin:21-jre-noble
-RUN groupadd --system vidacruz && useradd --system --gid vidacruz --home-dir /app vidacruz
+# UID/GID numéricos fijos: Kubernetes (runAsNonRoot) solo puede verificar un usuario no root si es numérico.
+RUN groupadd --system --gid 10001 vidacruz && useradd --system --uid 10001 --gid vidacruz --home-dir /app vidacruz
 WORKDIR /app
 COPY --from=modelo --chown=vidacruz:vidacruz /modelo/ /opt/modelo/
 COPY --from=build --chown=vidacruz:vidacruz /capas/dependencies/ ./
 COPY --from=build --chown=vidacruz:vidacruz /capas/spring-boot-loader/ ./
 COPY --from=build --chown=vidacruz:vidacruz /capas/snapshot-dependencies/ ./
 COPY --from=build --chown=vidacruz:vidacruz /capas/application/ ./
-USER vidacruz
+USER 10001:10001
 EXPOSE 8082
 ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError" \
     EMBEDDINGS_MODEL_URI=file:/opt/modelo/model.onnx \

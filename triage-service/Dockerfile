@@ -17,13 +17,14 @@ RUN java -Djarmode=tools -jar triage-service/target/triage-service.jar extract -
 
 # --- 2) Ejecución: JRE mínima, usuario sin privilegios ----------------------------------------------------
 FROM eclipse-temurin:21-jre-alpine
-RUN addgroup -S vidacruz && adduser -S vidacruz -G vidacruz
+# UID/GID numéricos fijos: Kubernetes (runAsNonRoot) solo puede verificar un usuario no root si es numérico.
+RUN addgroup -S -g 10001 vidacruz && adduser -S -u 10001 -G vidacruz vidacruz
 WORKDIR /app
 COPY --from=build --chown=vidacruz:vidacruz /capas/dependencies/ ./
 COPY --from=build --chown=vidacruz:vidacruz /capas/spring-boot-loader/ ./
 COPY --from=build --chown=vidacruz:vidacruz /capas/snapshot-dependencies/ ./
 COPY --from=build --chown=vidacruz:vidacruz /capas/application/ ./
-USER vidacruz
+USER 10001:10001
 EXPOSE 8081
 # La JVM toma el 75 % de la memoria del contenedor (no del host) y termina ante un OOM para que el orquestador
 # reinicie el contenedor en lugar de dejarlo degradado.

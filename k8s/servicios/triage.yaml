@@ -1,0 +1,88 @@
+# triage-service: 2 réplicas. Es seguro: el relay del outbox y el monitor de SLA usan FOR UPDATE SKIP LOCKED
+# (ADR-0002/0003), así que las réplicas nunca publican ni escalan dos veces el mismo evento o paciente.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: triage
+  namespace: vidacruz
+  labels: { app: triage, app.kubernetes.io/part-of: vidacruz }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: triage }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  template:
+    metadata:
+      labels: { app: triage }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8081"
+        prometheus.io/path: /actuator/prometheus
+    spec:
+      # Sin "service links": Kubernetes inyectaría REDIS_PORT=tcp://10.0.x.x:6379 (por el Service 'redis'), que choca
+      # con la variable REDIS_PORT que espera la aplicación. Los servicios se descubren por DNS.
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      initContainers:
+        - name: esperar-dependencias
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z postgres 5432 && nc -z kafka 9092; do echo esperando postgres/kafka; sleep 3; done"]
+          securityContext: { runAsUser: 65534, allowPrivilegeEscalation: false }
+      containers:
+        - name: triage
+          image: vidacruz/triage-service:local
+          ports:
+            - name: http
+              containerPort: 8081
+          envFrom:
+            - configMapRef: { name: vidacruz-config }
+          env:
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: vidacruz-secretos, key: POSTGRES_PASSWORD } }
+            - name: TRIAGE_API_KEY
+              valueFrom: { secretKeyRef: { name: vidacruz-secretos, key: TRIAGE_API_KEY } }
+          startupProbe:
+            httpGet: { path: /actuator/health/liveness, port: http }
+            periodSeconds: 5
+            failureThreshold: 36   # hasta 3 min para arrancar (migraciones Flyway incluidas)
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: http }
+            periodSeconds: 15
+            failureThreshold: 4
+          lifecycle:
+            # Da tiempo al ingress a dejar de enrutar antes del apagado ordenado (server.shutdown=graceful).
+            preStop:
+              exec: { command: ["sh", "-c", "sleep 5"] }
+          resources:
+            requests: { cpu: 200m, memory: 512Mi }
+            limits: { memory: 1Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: triage
+  namespace: vidacruz
+  labels: { app: triage }
+spec:
+  selector: { app: triage }
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

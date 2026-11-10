@@ -1,0 +1,30 @@
+# Punto de entrada público único (complemento "application routing" de AKS, NGINX administrado).
+# Solo se exponen las rutas de negocio; /actuator (probes y métricas) queda accesible únicamente dentro del clúster.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vidacruz
+  namespace: vidacruz
+  annotations:
+    # SSE (/alertas/stream): sin buffering y con lectura larga para mantener abierta la conexión del tablero.
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "64k"
+spec:
+  ingressClassName: webapprouting.kubernetes.azure.com
+  rules:
+    - http:
+        paths:
+          - path: /triage
+            pathType: Prefix
+            backend:
+              service: { name: triage, port: { name: http } }
+          - path: /asistente
+            pathType: Prefix
+            backend:
+              service: { name: asistente, port: { name: http } }
+          - path: /alertas
+            pathType: Prefix
+            backend:
+              service: { name: alertas, port: { name: http } }

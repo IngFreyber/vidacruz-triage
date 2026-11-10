@@ -306,6 +306,21 @@ class AlertasIntegrationTest extends IntegracionBase {
     }
 
     @Test
+    @DisplayName("SSE responde de inmediato (comentario inicial), sin esperar al primer keep-alive")
+    void streamRespondeDeInmediato() {
+        ServerSentEvent<String> primero = WebClient.create("http://localhost:" + puerto).get()
+                .uri("/alertas/stream?pendientes=false&api_key=" + API_KEY)
+                .accept(MediaType.TEXT_EVENT_STREAM)
+                .retrieve()
+                .bodyToFlux(new ParameterizedTypeReference<ServerSentEvent<String>>() {
+                })
+                .blockFirst(Duration.ofSeconds(5));
+
+        assertThat(primero).isNotNull();
+        assertThat(primero.comment()).as("primer evento: comentario inmediato, no un keep-alive").isEqualTo("conectado");
+    }
+
+    @Test
     void streamResponderConTipoEventStream() {
         web.get().uri("/alertas/stream").accept(MediaType.TEXT_EVENT_STREAM).exchange()
                 .expectStatus().isOk()

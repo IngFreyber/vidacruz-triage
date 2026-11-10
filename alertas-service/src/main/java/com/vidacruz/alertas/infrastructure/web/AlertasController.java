@@ -84,7 +84,10 @@ public class AlertasController {
                 .onBackpressureBuffer(BUFFER_POR_SUSCRIPTOR, BufferOverflowStrategy.DROP_OLDEST);
         Flux<ServerSentEvent<Alerta>> keepAlive = Flux.interval(props.heartbeat())
                 .map(i -> ServerSentEvent.<Alerta>builder().comment("keep-alive").build());
-        return Flux.merge(alertas, keepAlive);
+        // Comentario inmediato: WebFlux envía las cabeceras HTTP con el primer elemento. Sin él, un tablero sin alertas
+        // pendientes esperaba hasta el primer keep-alive (15 s) para ver la conexión abierta (detectado en AKS).
+        ServerSentEvent<Alerta> conectado = ServerSentEvent.<Alerta>builder().comment("conectado").build();
+        return Flux.concat(Flux.just(conectado), Flux.merge(alertas, keepAlive));
     }
 
     private static ServerSentEvent<Alerta> evento(Alerta a) {
